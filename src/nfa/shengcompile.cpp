@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -48,7 +48,7 @@
 #include "util/compile_context.h"
 #include "util/make_unique.h"
 #include "util/verify_types.h"
-#include "util/simd_utils.h"
+#include "util/simd_types.h"
 
 #include <map>
 #include <vector>
@@ -358,7 +358,7 @@ void populateBasicInfo(struct NFA *n, dfa_info &info,
     n->scratchStateSize = 1;
     n->streamStateSize = 1;
     n->nPositions = info.size();
-    n->type = SHENG_NFA_0;
+    n->type = SHENG_NFA;
     n->flags |= info.raw.hasEodReports() ? NFA_ACCEPTS_EOD : 0;
 
     sheng *s = (sheng *)getMutableImplNfa(n);
@@ -442,26 +442,23 @@ void createShuffleMasks(sheng *s, dfa_info &info,
 #ifdef DEBUG
         dumpShuffleMask(chr, buf, sizeof(buf));
 #endif
-        m128 mask = loadu128(buf);
-        s->shuffle_masks[chr] = mask;
+        memcpy(&s->shuffle_masks[chr], buf, sizeof(m128));
     }
 }
 
-bool has_accel_sheng(const NFA *nfa) {
-    const sheng *s = (const sheng *)getImplNfa(nfa);
-    return s->flags & SHENG_FLAG_HAS_ACCEL;
+bool has_accel_sheng(const NFA *) {
+    return true; /* consider the sheng region as accelerated */
 }
 
-aligned_unique_ptr<NFA> shengCompile(raw_dfa &raw,
-                                     const CompileContext &cc,
-                                     const ReportManager &rm,
-                                     set<dstate_id_t> *accel_states) {
+bytecode_ptr<NFA> shengCompile(raw_dfa &raw, const CompileContext &cc,
+                               const ReportManager &rm, bool only_accel_init,
+                               set<dstate_id_t> *accel_states) {
     if (!cc.grey.allowSheng) {
         DEBUG_PRINTF("Sheng is not allowed!\n");
         return nullptr;
     }
 
-    sheng_build_strat strat(raw, rm);
+    sheng_build_strat strat(raw, rm, only_accel_init);
     dfa_info info(strat);
 
     DEBUG_PRINTF("Trying to compile a %zu state Sheng\n", raw.states.size());
@@ -510,7 +507,7 @@ aligned_unique_ptr<NFA> shengCompile(raw_dfa &raw,
     DEBUG_PRINTF("NFA: %u, aux: %u, reports: %u, accel: %u, total: %u\n",
                  nfa_size, total_aux, total_reports, total_accel, total_size);
 
-    aligned_unique_ptr<NFA> nfa = aligned_zmalloc_unique<NFA>(total_size);
+    auto nfa = make_zeroed_bytecode_ptr<NFA>(total_size);
 
     populateBasicInfo(nfa.get(), info, accelInfo, nfa_size, reports_offset,
                       accel_offset, total_size, total_size - sizeof(NFA));

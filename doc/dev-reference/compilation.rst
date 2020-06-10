@@ -54,6 +54,75 @@ version of Hyperscan used to scan with it.
 Hyperscan provides support for targeting a database at a particular CPU
 platform; see :ref:`instr_specialization` for details.
 
+=====================
+Compile Pure Literals
+=====================
+
+Pure literal is a special case of regular expression. A character sequence is
+regarded as a pure literal if and only if each character is read and
+interpreted independently. No syntax association happens between any adjacent
+characters.
+
+For example, given an expression written as :regexp:`/bc?/`. We could say it is
+a regluar expression, with the meaning that character ``b`` followed by nothing
+or by one character ``c``. On the other view, we could also say it is a pure
+literal expression, with the meaning that this is a character sequence of 3-byte
+length, containing characters ``b``, ``c`` and ``?``. In regular case, the
+question mark character ``?`` has a particular syntax role called 0-1 quantifier,
+which has an syntax association with the character ahead of it. Similar
+characters exist in regular grammer like ``[``, ``]``, ``(``, ``)``, ``{``,
+``}``, ``-``, ``*``, ``+``, ``\``, ``|``, ``/``, ``:``, ``^``, ``.``, ``$``.
+While in pure literal case, all these meta characters lost extra meanings
+expect for that they are just common ASCII codes.
+
+Hyperscan is initially designed to process common regular expressions. It is
+hence embedded with a complex parser to do comprehensive regular grammer
+interpretion. Particularly, the identification of above meta characters is the
+basic step for the interpretion of far more complex regular grammers.
+
+However in real cases, patterns may not always be regular expressions. They
+could just be pure literals. Problem will come if the pure literals contain
+regular meta characters. Supposing fed directly into traditional Hyperscan
+compile API, all these meta characters will be interpreted in predefined ways,
+which is unnecessary and the result is totally out of expectation. To avoid
+such misunderstanding by traditional API, users have to preprocess these
+literal patterns by converting the meta characters into some other formats:
+either by adding a backslash ``\`` before certain meta characters, or by
+converting all the characters into a hexadecimal representation.
+
+In ``v5.2.0``, Hyperscan introduces 2 new compile APIs for pure literal patterns:
+
+#. :c:func:`hs_compile_lit`: compiles a single pure literal into a pattern
+   database.
+
+#. :c:func:`hs_compile_lit_multi`: compiles an array of pure literals into a
+   pattern database. All of the supplied patterns will be scanned for
+   concurrently at scan time, with user-supplied identifiers returned when they
+   match.
+
+These 2 APIs are designed for use cases where all patterns contained in the
+target rule set are pure literals. Users can pass the initial pure literal
+content directly into these APIs without worrying about writing regular meta
+characters in their patterns. No preprocessing work is needed any more.
+
+For new APIs, the ``length`` of each literal pattern is a newly added parameter.
+Hyperscan needs to locate the end position of the input expression via clearly
+knowing each literal's length, not by simply identifying character ``\0`` of a
+string.
+
+Supported flags: :c:member:`HS_FLAG_CASELESS`, :c:member:`HS_FLAG_SINGLEMATCH`,
+:c:member:`HS_FLAG_SOM_LEFTMOST`.
+
+.. note:: We don't support literal compilation API with :ref:`extparam`. And
+          for runtime implementation, traditional runtime APIs can still be
+          used to match pure literal patterns.
+
+.. note:: If the target rule set contains at least one regular expression,
+          please use traditional compile APIs :c:func:`hs_compile`,
+          :c:func:`hs_compile_multi` and :c:func:`hs_compile_ext_multi`.
+          The new literal APIs introduced here are designed for rule sets
+          containing only pure literal expressions.
+
 ***************
 Pattern Support
 ***************
@@ -64,7 +133,7 @@ libpcre are supported. The use of unsupported constructs will result in
 compilation errors.
 
 The version of PCRE used to validate Hyperscan's interpretation of this syntax
-is 8.38.
+is 8.41 or above.
 
 ====================
 Supported Constructs
@@ -170,6 +239,8 @@ The following regex constructs are not supported by Hyperscan:
 * The :regexp:`\\K` start of match reset directive.
 * Callouts and embedded code.
 * Atomic grouping and possessive quantifiers.
+
+.. _semantics:
 
 *********
 Semantics
@@ -284,15 +355,29 @@ which provides the following fields:
   expression should match successfully.
 * ``min_length``: The minimum match length (from start to end) required to
   successfully match this expression.
+* ``edit_distance``: Match this expression within a given Levenshtein distance.
+* ``hamming_distance``: Match this expression within a given Hamming distance.
 
-These parameters allow the set of matches produced by a pattern to be
-constrained at compile time, rather than relying on the application to process
-unwanted matches at runtime.
+These parameters either allow the set of matches produced by a pattern to be
+constrained at compile time (rather than relying on the application to process
+unwanted matches at runtime), or allow matching a pattern approximately (within
+a given edit distance) to produce more matches.
 
 For example, the pattern :regexp:`/foo.*bar/` when given a ``min_offset`` of 10
 and a ``max_offset`` of 15 will not produce matches when scanned against
 ``foobar`` or ``foo0123456789bar`` but will produce a match against the data
 streams ``foo0123bar`` or ``foo0123456bar``.
+
+Similarly, the pattern :regexp:`/foobar/` when given an ``edit_distance`` of 2
+will produce matches when scanned against ``foobar``, ``f00bar``, ``fooba``,
+``fobr``, ``fo_baz``, ``foooobar``, and anything else that lies within edit
+distance of 2 (as defined by Levenshtein distance).
+
+When the same pattern :regexp:`/foobar/` is given a ``hamming_distance`` of 2,
+it will produce matches when scanned against ``foobar``, ``boofar``,
+``f00bar``, and anything else with at most two characters substituted from the
+original pattern. For more details, see the :ref:`approximate_matching`
+section.
 
 =================
 Prefiltering Mode
@@ -367,7 +452,7 @@ The :c:type:`hs_platform_info_t` structure has two fields:
 #. ``cpu_features``: This allows the application to specify a mask of CPU
    features that may be used on the target platform. For example,
    :c:member:`HS_CPU_FEATURES_AVX2` can be specified for Intel\ |reg| Advanced
-   Vector Extensions +2 (Intel\ |reg| AVX2) instruction set support. If a flag
+   Vector Extensions 2 (Intel\ |reg| AVX2) instruction set support. If a flag
    for a particular CPU feature is specified, the database will not be usable on
    a CPU without that feature.
 
@@ -375,3 +460,174 @@ An :c:type:`hs_platform_info_t` structure targeted at the current host can be
 built with the :c:func:`hs_populate_platform` function.
 
 See :ref:`api_constants` for the full list of CPU tuning and feature flags.
+
+.. _approximate_matching:
+
+********************
+Approximate matching
+********************
+
+Hyperscan provides an experimental approximate matching mode, which will match
+patterns within a given edit distance. The exact matching behavior is defined as
+follows:
+
+#. **Edit distance** is defined as Levenshtein distance. That is, there are
+   three possible edit types considered: insertion, removal and substitution.
+   A more formal description can be found on
+   `Wikipedia <https://en.wikipedia.org/wiki/Levenshtein_distance>`__.
+
+#. **Hamming distance** is the number of positions by which two strings of
+   equal length differ. That is, it is the number of substitutions required to
+   convert one string to the other. There are no insertions or removals when
+   approximate matching using a Hamming distance. A more formal description can
+   be found on
+   `Wikipedia <https://en.wikipedia.org/wiki/Hamming_distance>`__.
+
+#. **Approximate matching** will match all *corpora* within a given edit or
+   Hamming distance. That is, given a pattern, approximate matching will match
+   anything that can be edited to arrive at a corpus that exactly matches the
+   original pattern.
+
+#. **Matching semantics** are exactly the same as described in :ref:`semantics`.
+
+Here are a few examples of approximate matching:
+
+* Pattern :regexp:`/foo/` can match ``foo`` when using regular Hyperscan
+  matching behavior. With approximate matching within edit distance 2, the
+  pattern will produce matches when scanned against ``foo``, ``foooo``, ``f00``,
+  ``f``, and anything else that lies within edit distance 2 of matching corpora
+  for the original pattern (``foo`` in this case).
+
+* Pattern :regexp:`/foo(bar)+/` with edit distance 1 will match ``foobarbar``,
+  ``foobarb0r``, ``fooarbar``, ``foobarba``, ``f0obarbar``, ``fobarbar`` and
+  anything else that lies within edit distance 1 of matching corpora for the
+  original pattern (``foobarbar`` in this case).
+
+* Pattern :regexp:`/foob?ar/` with edit distance 2 will match ``fooar``,
+  ``foo``, ``fabar``, ``oar`` and anything else that lies within edit distance 2
+  of matching corpora for the original pattern (``fooar`` in this case).
+
+Currently, there are trade-offs and limitations that come with approximate
+matching support. Here they are, in a nutshell:
+
+* Reduced pattern support:
+
+  * For many patterns, approximate matching is complex and can result in
+    Hyperscan failing to compile a pattern with a "Pattern too large" error,
+    even if the pattern is supported in normal operation.
+  * Additionally, some patterns cannot be approximately matched because they
+    reduce to so-called "vacuous" patterns (patterns that match everything). For
+    example, pattern :regexp:`/foo/` with edit distance 3, if implemented,
+    would reduce to matching zero-length buffers. Such patterns will result in a
+    "Pattern cannot be approximately matched" compile error. Approximate
+    matching within a Hamming distance does not remove symbols, so will not
+    reduce to a vacuous pattern.
+  * Finally, due to the inherent complexities of defining matching behavior,
+    approximate matching implements a reduced subset of regular expression
+    syntax. Approximate matching does not support UTF-8 (and other
+    multibyte character encodings), and word boundaries (that is, ``\b``, ``\B``
+    and other equivalent constructs). Patterns containing unsupported constructs
+    will result in "Pattern cannot be approximately matched" compile error.
+  * When using approximate matching in conjunction with SOM, all of the
+    restrictions of SOM also apply. See :ref:`som` for more
+    details.
+* Increased stream state/byte code size requirements: due to approximate
+  matching byte code being inherently larger and more complex than exact
+  matching, the corresponding requirements also increase.
+* Performance overhead: similarly, there is generally a performance cost
+  associated with approximate matching, both due to increased matching
+  complexity, and due to the fact that it will produce more matches.
+
+Approximate matching is always disabled by default, and can be enabled on a
+per-pattern basis by using an extended parameter described in :ref:`extparam`.
+
+.. _logical_combinations:
+
+********************
+Logical Combinations
+********************
+
+For situations when a user requires behaviour that depends on the presence or
+absence of matches from groups of patterns, Hyperscan provides support for the
+logical combination of patterns in a given pattern set, with three operators:
+``NOT``, ``AND`` and ``OR``.
+
+The logical value of such a combination is based on each expression's matching
+status at a given offset. The matching status of any expression has a boolean
+value: *false* if the expression has not yet matched or *true* if the expression
+has already matched. In particular, the value of a ``NOT`` operation at a given
+offset is *true* if the expression it refers to is *false* at this offset.
+
+For example, ``NOT 101`` means that expression 101 has not yet matched at this
+offset.
+
+A logical combination is passed to Hyperscan at compile time as an expression.
+This combination expression will raise matches at every offset where one of its
+sub-expressions matches and the logical value of the whole expression is *true*.
+
+To illustrate, here is an example combination expression: ::
+
+    ((301 OR 302) AND 303) AND (304 OR NOT 305)
+
+If expression 301 matches at offset 10, the logical value of 301 is *true*
+while the other patterns' values are *false*. Hence, the whole combination's value is
+*false*.
+
+Then expression 303 matches at offset 20. Now the values of 301 and 303 are
+*true* while the other patterns' values are still *false*. In this case, the
+combination's value is *true*, so the combination expression raises a match at
+offset 20.
+
+Finally, expression 305 has matches at offset 30. Now the values of 301, 303 and 305
+are *true* while the other patterns' values are still *false*. In this case, the
+combination's value is *false* and no match is raised.
+
+**Using Logical Combinations**
+
+In logical combination syntax, an expression is written as infix notation, it
+consists of operands, operators and parentheses. The operands are expression
+IDs, and operators are ``!`` (NOT), ``&`` (AND) or ``|`` (OR). For example, the
+combination described in the previous section would be written as: ::
+
+    ((301 | 302) & 303) & (304 | !305)
+
+In a logical combination expression:
+
+ * The priority of operators are ``!`` > ``&`` > ``|``. For example:
+    - ``A&B|C`` is treated as ``(A&B)|C``,
+    - ``A|B&C`` is treated as ``A|(B&C)``,
+    - ``A&!B`` is treated as ``A&(!B)``.
+ * Extra parentheses are allowed. For example:
+    - ``(A)&!(B)`` is the same as ``A&!B``,
+    - ``(A&B)|C`` is the same as ``A&B|C``.
+ * Whitespace is ignored.
+
+To use a logical combination expression, it must be passed to one of the
+Hyperscan compile functions (:c:func:`hs_compile_multi`,
+:c:func:`hs_compile_ext_multi`) along with the :c:member:`HS_FLAG_COMBINATION` flag,
+which identifies the pattern as a logical combination expression. The patterns
+referred to in the logical combination expression must be compiled together in
+the same pattern set as the combination expression.
+
+When an expression has the :c:member:`HS_FLAG_COMBINATION` flag set, it ignores
+all other flags except the :c:member:`HS_FLAG_SINGLEMATCH` flag and the
+:c:member:`HS_FLAG_QUIET` flag.
+
+Hyperscan will accept logical combination expressions at compile time that
+evaluate to *true* when no patterns have matched, and report the match for
+combination at end of data if no patterns have matched; for example: ::
+
+    !101
+    !101|102
+    !101&!102
+    !(101&102)
+
+Patterns that are referred to as operands within a logical combination (for
+example, 301 through 305 in the examples above) may also use the
+:c:member:`HS_FLAG_QUIET` flag to silence the reporting of individual matches
+for those patterns. In the absence of this flag, all matches (for
+both individual patterns and their logical combinations) will be reported.
+
+When an expression has both the :c:member:`HS_FLAG_COMBINATION` flag and the
+:c:member:`HS_FLAG_QUIET` flag set, no matches for this logical combination
+will be reported.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -34,9 +34,11 @@
 #ifndef UTIL_REPORT_H
 #define UTIL_REPORT_H
 
-#include "util/exhaust.h" // for INVALID_EKEY
-#include "order_check.h"
 #include "ue2common.h"
+#include "util/exhaust.h" // for INVALID_EKEY
+#include "util/logical.h" // for INVALID_LKEY
+#include "util/hash.h"
+#include "util/order_check.h"
 
 #include <cassert>
 
@@ -105,6 +107,16 @@ struct Report {
      * Additionally after reporting a match the ekey will be set. If not
      * exhaustible, this will be INVALID_EKEY. */
     u32 ekey = INVALID_EKEY;
+
+    /** \brief Logical Combination key in each combination.
+     *
+     * If in Logical Combination, the lkey to check before reporting a match.
+     * Additionally before checking the lkey will be set. If not
+     * in Logical Combination, this will be INVALID_LKEY. */
+    u32 lkey = INVALID_LKEY;
+
+    /** \brief Quiet flag for expressions in any logical combination. */
+    bool quiet = false;
 
     /** \brief Adjustment to add to the match offset when we report a match.
      *
@@ -195,17 +207,28 @@ bool operator<(const Report &a, const Report &b) {
     return false;
 }
 
+inline
+bool operator==(const Report &a, const Report &b) {
+    return a.type == b.type && a.quashSom == b.quashSom &&
+           a.minOffset == b.minOffset && a.maxOffset == b.maxOffset &&
+           a.minLength == b.minLength && a.ekey == b.ekey &&
+           a.offsetAdjust == b.offsetAdjust && a.onmatch == b.onmatch &&
+           a.revNfaIndex == b.revNfaIndex && a.somDistance == b.somDistance &&
+           a.topSquashDistance == b.topSquashDistance;
+}
+
 static inline
-Report makeECallback(u32 report, s32 offsetAdjust, u32 ekey) {
+Report makeECallback(u32 report, s32 offsetAdjust, u32 ekey, bool quiet) {
     Report ir(EXTERNAL_CALLBACK, report);
     ir.offsetAdjust = offsetAdjust;
     ir.ekey = ekey;
+    ir.quiet = (u8)quiet;
     return ir;
 }
 
 static inline
 Report makeCallback(u32 report, s32 offsetAdjust) {
-    return makeECallback(report, offsetAdjust, INVALID_EKEY);
+    return makeECallback(report, offsetAdjust, INVALID_EKEY, false);
 }
 
 static inline
@@ -244,6 +267,19 @@ bool isSimpleExhaustible(const Report &ir) {
     return true;
 }
 
-} // namespace
+} // namespace ue2
+
+namespace std {
+
+template<>
+struct hash<ue2::Report> {
+    std::size_t operator()(const ue2::Report &r) const {
+        return ue2::hash_all(r.type, r.quashSom, r.minOffset, r.maxOffset,
+                             r.minLength, r.ekey, r.offsetAdjust, r.onmatch,
+                             r.revNfaIndex, r.somDistance, r.topSquashDistance);
+    }
+};
+
+} // namespace std
 
 #endif // UTIL_REPORT_H

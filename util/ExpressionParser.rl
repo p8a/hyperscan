@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -48,7 +48,9 @@ enum ParamKey {
     PARAM_NONE,
     PARAM_MIN_OFFSET,
     PARAM_MAX_OFFSET,
-    PARAM_MIN_LENGTH
+    PARAM_MIN_LENGTH,
+    PARAM_EDIT_DISTANCE,
+    PARAM_HAMM_DISTANCE
 };
 
 %%{
@@ -74,6 +76,8 @@ enum ParamKey {
             case '8': *flags |= HS_FLAG_UTF8; break;
             case 'P': *flags |= HS_FLAG_PREFILTER; break;
             case 'L': *flags |= HS_FLAG_SOM_LEFTMOST; break;
+            case 'C': *flags |= HS_FLAG_COMBINATION; break;
+            case 'Q': *flags |= HS_FLAG_QUIET; break;
             default: fbreak;
         }
     }
@@ -91,6 +95,14 @@ enum ParamKey {
             case PARAM_MIN_LENGTH:
                 ext->flags |= HS_EXT_FLAG_MIN_LENGTH;
                 ext->min_length = num;
+                break;
+            case PARAM_EDIT_DISTANCE:
+                ext->flags |= HS_EXT_FLAG_EDIT_DISTANCE;
+                ext->edit_distance = num;
+                break;
+            case PARAM_HAMM_DISTANCE:
+                ext->flags |= HS_EXT_FLAG_HAMMING_DISTANCE;
+                ext->hamming_distance = num;
                 break;
             case PARAM_NONE:
             default:
@@ -110,9 +122,9 @@ void initExt(hs_expr_ext *ext) {
     ext->max_offset = MAX_OFFSET;
 }
 
-bool readExpression(const std::string &input, std::string &expr,
-                    unsigned int *flags, hs_expr_ext *ext,
-                    bool *must_be_ordered) {
+bool HS_CDECL readExpression(const std::string &input, std::string &expr,
+                             unsigned int *flags, hs_expr_ext *ext,
+                             bool *must_be_ordered) {
     assert(flags);
     assert(ext);
 
@@ -149,10 +161,12 @@ bool readExpression(const std::string &input, std::string &expr,
     enum ParamKey key = PARAM_NONE;
 
     %%{
-        single_flag = [ismW8HPLVO];
+        single_flag = [ismW8HPLVOCQ];
         param = ('min_offset' @{ key = PARAM_MIN_OFFSET; } |
-                 'max_offset' @{ key = PARAM_MAX_OFFSET; } | 
-                 'min_length' @{ key = PARAM_MIN_LENGTH; } );
+                 'max_offset' @{ key = PARAM_MAX_OFFSET; } |
+                 'min_length' @{ key = PARAM_MIN_LENGTH; } |
+                 'edit_distance' @{ key = PARAM_EDIT_DISTANCE; } |
+                 'hamming_distance' @{ key = PARAM_HAMM_DISTANCE; });
 
         value = (digit @accumulateNum)+ >{num = 0;};
         param_spec = (' '* param '=' value ' '*) >{ key = PARAM_NONE; }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,7 +30,6 @@
 #define FDR_ENGINE_DESCRIPTION_H
 
 #include "engine_description.h"
-#include "util/ue2_containers.h"
 
 #include <map>
 #include <memory>
@@ -43,8 +42,6 @@ struct FDREngineDef {
     u32 schemeWidth;
     u32 numBuckets;
     u64a cpu_features;
-    u32 confirmPullBackDistance;
-    u32 confirmTopLevelSplit;
 };
 
 class FDREngineDescription : public EngineDescription {
@@ -64,7 +61,6 @@ public:
     explicit FDREngineDescription(const FDREngineDef &def);
 
     u32 getDefaultFloodSuffixLength() const override;
-    bool typicallyHoldsOneCharLits() const override { return stride == 1; }
 };
 
 std::unique_ptr<FDREngineDescription>

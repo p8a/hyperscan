@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -68,7 +68,7 @@ const void *getByOffset(const struct RoseEngine *t, u32 offset) {
 
 static really_inline
 void *getRoleState(char *state) {
-    return state + sizeof(u8); // status flags
+    return state + ROSE_STATE_OFFSET_ROLE_MMBIT;
 }
 
 /** \brief Fetch the active array for suffix nfas. */
@@ -97,8 +97,8 @@ void storeGroups(const struct RoseEngine *t, char *state, rose_group groups) {
 }
 
 static really_inline
-u8 *getFloatingMatcherState(const struct RoseEngine *t, char *state) {
-    return (u8 *)(state + t->stateOffsets.floatingMatcherState);
+u8 *getLongLitState(const struct RoseEngine *t, char *state) {
+    return (u8 *)(state + t->stateOffsets.longLitState);
 }
 
 static really_inline
@@ -125,6 +125,15 @@ void updateLastMatchOffset(struct RoseContext *tctxt, u64a offset) {
     assert(offset >= tctxt->minMatchOffset);
     assert(offset >= tctxt->lastMatchOffset);
     tctxt->lastMatchOffset = offset;
+}
+
+static really_inline
+void updateLastCombMatchOffset(struct RoseContext *tctxt, u64a offset) {
+    DEBUG_PRINTF("match @%llu, last match @%llu\n", offset,
+                 tctxt->lastCombMatchOffset);
+
+    assert(offset >= tctxt->lastCombMatchOffset);
+    tctxt->lastCombMatchOffset = offset;
 }
 
 static really_inline

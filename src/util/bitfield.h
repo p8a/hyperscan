@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -36,12 +36,12 @@
 #include "ue2common.h"
 #include "popcount.h"
 #include "util/bitutils.h"
+#include "util/hash.h"
 
 #include <array>
 #include <cassert>
 
 #include <boost/dynamic_bitset.hpp>
-#include <boost/functional/hash/hash.hpp>
 
 namespace ue2 {
 
@@ -305,9 +305,10 @@ public:
     }
 
     /// Bitwise OR.
-    bitfield operator|(bitfield a) const {
-        a |= *this;
-        return a;
+    bitfield operator|(const bitfield &a) const {
+        bitfield b = a;
+        b |= *this;
+        return b;
     }
 
     /// Bitwise OR-equals.
@@ -325,9 +326,10 @@ public:
     }
 
     /// Bitwise AND.
-    bitfield operator&(bitfield a) const {
-        a &= *this;
-        return a;
+    bitfield operator&(const bitfield &a) const {
+        bitfield b = a;
+        b &= *this;
+        return b;
     }
 
     /// Bitwise AND-equals.
@@ -373,7 +375,7 @@ public:
 
     /// Simple hash.
     size_t hash() const {
-        return boost::hash_range(std::begin(bits), std::end(bits));
+        return ue2_hasher()(bits);
     }
 
     /// Sentinel value meaning "no more bits", used by find_first and
@@ -420,12 +422,17 @@ private:
     std::array<block_type, num_blocks> bits;
 };
 
-/** \brief Boost-style hash free function. */
-template<size_t requested_size>
-size_t hash_value(const bitfield<requested_size> &b) {
-    return b.hash();
-}
-
 } // namespace ue2
+
+namespace std {
+
+template<size_t requested_size>
+struct hash<ue2::bitfield<requested_size>> {
+    size_t operator()(const ue2::bitfield<requested_size> &b) const {
+        return b.hash();
+    }
+};
+
+} // namespace std
 
 #endif // BITFIELD_H

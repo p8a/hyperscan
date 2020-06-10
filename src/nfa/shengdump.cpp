@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -38,8 +38,8 @@
 #include "ue2common.h"
 #include "util/charreach.h"
 #include "util/dump_charclass.h"
-#include "util/simd_utils.h"
-
+#include "util/dump_util.h"
+#include "util/simd_types.h"
 
 #ifndef DUMP_SUPPORT
 #error No dump support!
@@ -100,7 +100,7 @@ void dumpMasks(FILE *f, const sheng *s) {
     for (u32 chr = 0; chr < 256; chr++) {
         u8 buf[16];
         m128 shuffle_mask = s->shuffle_masks[chr];
-        store128(buf, shuffle_mask);
+        memcpy(buf, &shuffle_mask, sizeof(m128));
 
         fprintf(f, "%3u: ", chr);
         for (u32 pos = 0; pos < 16; pos++) {
@@ -115,8 +115,9 @@ void dumpMasks(FILE *f, const sheng *s) {
     }
 }
 
-void nfaExecSheng0_dumpText(const NFA *nfa, FILE *f) {
-    assert(nfa->type == SHENG_NFA_0);
+static
+void nfaExecSheng_dumpText(const NFA *nfa, FILE *f) {
+    assert(nfa->type == SHENG_NFA);
     const sheng *s = (const sheng *)getImplNfa(nfa);
 
     fprintf(f, "sheng DFA\n");
@@ -235,7 +236,7 @@ void shengGetTransitions(const NFA *n, u16 state, u16 *t) {
         u8 buf[16];
         m128 shuffle_mask = s->shuffle_masks[i];
 
-        store128(buf, shuffle_mask);
+        memcpy(buf, &shuffle_mask, sizeof(m128));
 
         t[i] = buf[state] & SHENG_STATE_MASK;
     }
@@ -243,8 +244,9 @@ void shengGetTransitions(const NFA *n, u16 state, u16 *t) {
     t[TOP] = aux->top & SHENG_STATE_MASK;
 }
 
-void nfaExecSheng0_dumpDot(const NFA *nfa, FILE *f, const string &) {
-    assert(nfa->type == SHENG_NFA_0);
+static
+void nfaExecSheng_dumpDot(const NFA *nfa, FILE *f) {
+    assert(nfa->type == SHENG_NFA);
     const sheng *s = (const sheng *)getImplNfa(nfa);
 
     dumpDotPreambleDfa(f);
@@ -260,6 +262,12 @@ void nfaExecSheng0_dumpDot(const NFA *nfa, FILE *f, const string &) {
     }
 
     fprintf(f, "}\n");
+}
+
+void nfaExecSheng_dump(const NFA *nfa, const string &base) {
+    assert(nfa->type == SHENG_NFA);
+    nfaExecSheng_dumpText(nfa, StdioFile(base + ".txt", "w"));
+    nfaExecSheng_dumpDot(nfa, StdioFile(base + ".dot", "w"));
 }
 
 } // namespace ue2

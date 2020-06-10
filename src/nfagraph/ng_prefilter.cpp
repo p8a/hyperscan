@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -26,7 +26,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/** \file
+/**
+ * \file
  * \brief Prefilter Reductions.
  *
  * This file contains routines for reducing the size of an NFA graph that we
@@ -54,10 +55,11 @@
 #include "util/compile_context.h"
 #include "util/container.h"
 #include "util/dump_charclass.h"
-#include "util/ue2_containers.h"
 #include "util/graph_range.h"
 
 #include <queue>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <boost/range/adaptor/map.hpp>
 
@@ -92,13 +94,13 @@ struct RegionInfo {
     u32 id;                             //!< region id
     deque<NFAVertex> vertices;          //!< vertices in the region
     CharReach reach;                    //!< union of region reach
-    depth minWidth = 0;                 //!< min width of region subgraph
-    depth maxWidth = depth::infinity(); //!< max width of region subgraph
+    depth minWidth{0};                  //!< min width of region subgraph
+    depth maxWidth{depth::infinity()};  //!< max width of region subgraph
     bool atBoundary = false;            //!< region is next to an accept
 
     // Bigger score is better.
     size_t score() const {
-        // FIXME: charreach should be a signal?
+        // TODO: charreach should be a signal?
         size_t numVertices = vertices.size();
         if (atBoundary) {
             return numVertices - min(PENALTY_BOUNDARY, numVertices);
@@ -126,10 +128,10 @@ struct RegionInfoQueueComp {
 
 static
 void findWidths(const NGHolder &g,
-                const ue2::unordered_map<NFAVertex, u32> &region_map,
+                const unordered_map<NFAVertex, u32> &region_map,
                 RegionInfo &ri) {
     NGHolder rg;
-    ue2::unordered_map<NFAVertex, NFAVertex> mapping;
+    unordered_map<NFAVertex, NFAVertex> mapping;
     fillHolder(&rg, g, ri.vertices, &mapping);
 
     // Wire our entries to start and our exits to accept.
@@ -154,7 +156,7 @@ void findWidths(const NGHolder &g,
 // acc can be either h.accept or h.acceptEod.
 static
 void markBoundaryRegions(const NGHolder &h,
-                         const ue2::unordered_map<NFAVertex, u32> &region_map,
+                         const unordered_map<NFAVertex, u32> &region_map,
                          map<u32, RegionInfo> &regions, NFAVertex acc) {
     for (auto v : inv_adjacent_vertices_range(acc, h)) {
         if (is_special(v, h)) {
@@ -173,7 +175,7 @@ void markBoundaryRegions(const NGHolder &h,
 
 static
 map<u32, RegionInfo> findRegionInfo(const NGHolder &h,
-               const ue2::unordered_map<NFAVertex, u32> &region_map) {
+               const unordered_map<NFAVertex, u32> &region_map) {
     map<u32, RegionInfo> regions;
     for (auto v : vertices_range(h)) {
         if (is_special(v, h)) {
@@ -212,39 +214,38 @@ map<u32, RegionInfo> findRegionInfo(const NGHolder &h,
 }
 
 static
-void copyInEdges(NGHolder &g, NFAVertex from, NFAVertex to,
-                 const ue2::unordered_set<NFAVertex> &rverts) {
+void copyInEdges(NGHolder &g, NFAVertex from, NFAVertex to) {
     for (const auto &e : in_edges_range(from, g)) {
         NFAVertex u = source(e, g);
-        if (contains(rverts, u)) {
-            continue;
-        }
-
-        // Check with edge_by_target to cope with predecessors with large
-        // fan-out.
-        if (edge_by_target(u, to, g).second) {
-            continue;
-        }
-
-        add_edge(u, to, g[e], g);
+        add_edge_if_not_present(u, to, g[e], g);
     }
 }
 
 static
-void copyOutEdges(NGHolder &g, NFAVertex from, NFAVertex to,
-                  const ue2::unordered_set<NFAVertex> &rverts) {
+void copyOutEdges(NGHolder &g, NFAVertex from, NFAVertex to) {
     for (const auto &e : out_edges_range(from, g)) {
         NFAVertex t = target(e, g);
-        if (contains(rverts, t)) {
-            continue;
-        }
-
         add_edge_if_not_present(to, t, g[e], g);
 
         if (is_any_accept(t, g)) {
             const auto &reports = g[from].reports;
             g[to].reports.insert(reports.begin(), reports.end());
         }
+    }
+}
+
+static
+void removeInteriorEdges(NGHolder &g, const RegionInfo &ri) {
+    // Set of vertices in region, for quick lookups.
+    const unordered_set<NFAVertex> rverts(ri.vertices.begin(),
+                                          ri.vertices.end());
+
+    auto is_interior_in_edge = [&](const NFAEdge &e) {
+        return contains(rverts, source(e, g));
+    };
+
+    for (auto v : ri.vertices) {
+        remove_in_edge_if(v, is_interior_in_edge, g);
     }
 }
 
@@ -289,19 +290,17 @@ void replaceRegion(NGHolder &g, const RegionInfo &ri,
         add_edge(verts.back(), verts.back(), g);
     }
 
-    // Set of vertices in region, for quick lookups.
-    const ue2::unordered_set<NFAVertex> rverts(ri.vertices.begin(),
-                                               ri.vertices.end());
+    removeInteriorEdges(g, ri);
 
     for (size_t i = 0; i < replacementSize; i++) {
         NFAVertex v_new = verts[i];
 
         for (auto v_old : ri.vertices) {
             if (i == 0) {
-                copyInEdges(g, v_old, v_new, rverts);
+                copyInEdges(g, v_old, v_new);
             }
             if (i + 1 >= ri.minWidth) {
-                copyOutEdges(g, v_old, v_new, rverts);
+                copyOutEdges(g, v_old, v_new);
             }
         }
     }
@@ -361,7 +360,7 @@ void reduceRegions(NGHolder &h) {
     // We may have vertices that have edges to both accept and acceptEod: in
     // this case, we can optimize for performance by removing the acceptEod
     // edges.
-    remove_in_edge_if(h.acceptEod, SourceHasEdgeToAccept(h), h.g);
+    remove_in_edge_if(h.acceptEod, SourceHasEdgeToAccept(h), h);
 }
 
 void prefilterReductions(NGHolder &h, const CompileContext &cc) {
@@ -378,13 +377,13 @@ void prefilterReductions(NGHolder &h, const CompileContext &cc) {
     DEBUG_PRINTF("before: graph with %zu vertices, %zu edges\n",
                  num_vertices(h), num_edges(h));
 
-    h.renumberVertices();
-    h.renumberEdges();
+    renumber_vertices(h);
+    renumber_edges(h);
 
     reduceRegions(h);
 
-    h.renumberVertices();
-    h.renumberEdges();
+    renumber_vertices(h);
+    renumber_edges(h);
 
     DEBUG_PRINTF("after: graph with %zu vertices, %zu edges\n",
                  num_vertices(h), num_edges(h));

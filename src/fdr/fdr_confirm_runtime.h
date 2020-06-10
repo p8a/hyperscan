@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -29,6 +29,7 @@
 #ifndef FDR_CONFIRM_RUNTIME_H
 #define FDR_CONFIRM_RUNTIME_H
 
+#include "scratch.h"
 #include "fdr_internal.h"
 #include "fdr_loadval.h"
 #include "hwlm/hwlm.h"
@@ -40,14 +41,15 @@
 // the whole confirmation procedure
 static really_inline
 void confWithBit(const struct FDRConfirm *fdrc, const struct FDR_Runtime_Args *a,
-                 size_t i, u32 pullBackAmount, hwlmcb_rv_t *control,
-                 u32 *last_match, u64a conf_key) {
+                 size_t i, hwlmcb_rv_t *control, u32 *last_match,
+                 u64a conf_key, u64a *conf, u8 bit) {
     assert(i < a->len);
+    assert(i >= a->start_offset);
     assert(ISALIGNED(fdrc));
 
     const u8 * buf = a->buf;
     u32 c = CONF_HASH_CALL(conf_key, fdrc->andmsk, fdrc->mult,
-                           fdrc->nBitsOrSoleID);
+                           fdrc->nBits);
     u32 start = getConfirmLitIndex(fdrc)[c];
     if (likely(!start)) {
         return;
@@ -56,6 +58,10 @@ void confWithBit(const struct FDRConfirm *fdrc, const struct FDR_Runtime_Args *a
     const struct LitInfo *li
         = (const struct LitInfo *)((const u8 *)fdrc + start);
 
+    struct hs_scratch *scratch = a->scratch;
+    assert(!scratch->fdr_conf);
+    scratch->fdr_conf = conf;
+    scratch->fdr_conf_offset = bit;
     u8 oldNext; // initialized in loop
     do {
         assert(ISALIGNED(li));
@@ -64,155 +70,35 @@ void confWithBit(const struct FDRConfirm *fdrc, const struct FDR_Runtime_Args *a
             goto out;
         }
 
-        if ((*last_match == li->id) && (li->flags & NoRepeat)) {
+        if ((*last_match == li->id) && (li->flags & FDR_LIT_FLAG_NOREPEAT)) {
             goto out;
         }
 
-        const u8 *loc = buf + i - li->size + 1 - pullBackAmount;
+        const u8 *loc = buf + i - li->size + 1;
 
-        u8 caseless = li->flags & Caseless;
         if (loc < buf) {
             u32 full_overhang = buf - loc;
-
-            const u8 *history = caseless ? a->buf_history_nocase
-                                         : a->buf_history;
-            size_t len_history = caseless ? a->len_history_nocase
-                                          : a->len_history;
+            size_t len_history = a->len_history;
 
             // can't do a vectored confirm either if we don't have
             // the bytes
             if (full_overhang > len_history) {
                 goto out;
             }
-
-            // as for the regular case, no need to do a full confirm if
-            // we're a short literal
-            if (unlikely(li->size > sizeof(CONF_TYPE))) {
-                const u8 *s1 = li->s;
-                const u8 *s2 = s1 + full_overhang;
-                const u8 *loc1 = history + len_history - full_overhang;
-                const u8 *loc2 = buf;
-                size_t size1 = MIN(full_overhang, li->size - sizeof(CONF_TYPE));
-                size_t wind_size2_back = sizeof(CONF_TYPE) + full_overhang;
-                size_t size2 = wind_size2_back > li->size ?
-                    0 : li->size - wind_size2_back;
-
-                if (cmpForward(loc1, s1, size1, caseless)) {
-                    goto out;
-                }
-                if (cmpForward(loc2, s2, size2, caseless)) {
-                    goto out;
-                }
-            }
-        } else { // NON-VECTORING PATH
-
-            // if string < conf_type we don't need regular string cmp
-            if (unlikely(li->size > sizeof(CONF_TYPE))) {
-                if (cmpForward(loc, li->s, li->size - sizeof(CONF_TYPE),
-                               caseless)) {
-                    goto out;
-                }
-            }
         }
+        assert(li->size <= sizeof(CONF_TYPE));
 
         if (unlikely(!(li->groups & *control))) {
             goto out;
         }
 
-        if (unlikely(li->flags & ComplexConfirm)) {
-            const u8 *loc2 = buf + i - li->extended_size + 1 - pullBackAmount;
-            if (loc2 < buf) {
-                u32 full_overhang = buf - loc2;
-                size_t len_history = caseless ? a->len_history_nocase
-                                              : a->len_history;
-                if (full_overhang > len_history) {
-                    goto out;
-                }
-            }
-        }
-
         *last_match = li->id;
-        *control = a->cb(loc - buf, i, li->id, a->ctxt);
+        *control = a->cb(i, li->id, scratch);
     out:
         oldNext = li->next; // oldNext is either 0 or an 'adjust' value
-        li = (const struct LitInfo *)((const u8 *)li + oldNext + li->size);
+        li++;
     } while (oldNext);
-}
-
-// 'light-weight' confirmation function which is used by 1-mask Teddy;
-// in the 'confirmless' case it simply calls callback function,
-// otherwise it calls 'confWithBit' function for the full confirmation procedure
-static really_inline
-void confWithBit1(const struct FDRConfirm *fdrc,
-                  const struct FDR_Runtime_Args *a, size_t i,
-                  hwlmcb_rv_t *control, u32 *last_match, u64a conf_key) {
-    assert(i < a->len);
-    assert(ISALIGNED(fdrc));
-
-    if (unlikely(fdrc->mult)) {
-        confWithBit(fdrc, a, i, 0, control, last_match, conf_key);
-        return;
-    } else {
-        u32 id = fdrc->nBitsOrSoleID;
-
-        if ((*last_match == id) && (fdrc->flags & NoRepeat)) {
-            return;
-        }
-        *last_match = id;
-        *control = a->cb(i, i, id, a->ctxt);
-    }
-}
-
-// This is 'light-weight' confirmation function which is used by 2-3-4-mask Teddy
-// In the 'confirmless' case it makes fast 32-bit comparison,
-// otherwise it calls 'confWithBit' function for the full confirmation procedure
-static really_inline
-void confWithBitMany(const struct FDRConfirm *fdrc,
-                     const struct FDR_Runtime_Args *a, size_t i, CautionReason r,
-                     hwlmcb_rv_t *control, u32 *last_match, u64a conf_key) {
-    assert(i < a->len);
-    assert(ISALIGNED(fdrc));
-
-    if (i < a->start_offset) {
-        return;
-    }
-
-    if (unlikely(fdrc->mult)) {
-        confWithBit(fdrc, a, i, 0, control, last_match, conf_key);
-        return;
-    } else {
-        const u32 id = fdrc->nBitsOrSoleID;
-        const u32 len = fdrc->soleLitSize;
-
-        if ((*last_match == id) && (fdrc->flags & NoRepeat)) {
-            return;
-        }
-
-        if (r == VECTORING && len > i - a->start_offset) {
-            if (len > i + a->len_history) {
-                return;
-            }
-
-            u32 cmp = (u32)a->buf[i] << 24;
-
-            if (len <= i) {
-                for (u32 j = 1; j <= len; j++) {
-                    cmp |= (u32)a->buf[i - j] << (24 - (j * 8));
-                }
-            } else {
-                for (u32 j = 1; j <= i; j++) {
-                    cmp |= (u32)a->buf[i - j] << (24 - (j * 8));
-                }
-                cmp |= (u32)(a->histBytes >> (40 + i * 8));
-            }
-
-            if ((fdrc->soleLitMsk & cmp) != fdrc->soleLitCmp) {
-               return;
-            }
-        }
-        *last_match = id;
-        *control = a->cb(i - len, i, id, a->ctxt);
-    }
+    scratch->fdr_conf = NULL;
 }
 
 #endif

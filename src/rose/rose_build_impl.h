@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -26,28 +26,31 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef ROSE_BUILD_IMPL_H_17E20A3C6935D6
-#define ROSE_BUILD_IMPL_H_17E20A3C6935D6
+#ifndef ROSE_BUILD_IMPL_H
+#define ROSE_BUILD_IMPL_H
 
 #include "rose_build.h"
 #include "rose_build_util.h"
+#include "rose_common.h"
 #include "rose_graph.h"
 #include "nfa/mpvcompile.h"
 #include "nfa/goughcompile.h"
 #include "nfa/nfa_internal.h"
 #include "nfagraph/ng_holder.h"
 #include "nfagraph/ng_revacc.h"
-#include "util/alloc.h"
+#include "util/bytecode_ptr.h"
+#include "util/flat_containers.h"
+#include "util/hash.h"
 #include "util/order_check.h"
 #include "util/queue_index_factory.h"
-#include "util/ue2_containers.h"
+#include "util/ue2string.h"
+#include "util/unordered.h"
+#include "util/verify_types.h"
 
 #include <deque>
 #include <map>
 #include <string>
 #include <vector>
-#include <boost/bimap.hpp>
-#include <boost/functional/hash/hash.hpp>
 #include <boost/variant.hpp>
 
 struct RoseEngine;
@@ -55,6 +58,19 @@ struct RoseEngine;
 namespace ue2 {
 
 #define ROSE_GROUPS_MAX 64
+
+#define ROSE_LONG_LITERAL_THRESHOLD_MIN 33
+
+/**
+ * \brief The largest allowable "short" literal fragment which can be given to
+ * a literal matcher directly.
+ *
+ * Literals longer than this will be truncated to their suffix and confirmed in
+ * the Rose interpreter, either as "medium length" literals which can be
+ * confirmed from history, or "long literals" which make use of the streaming
+ * table support.
+ */
+#define ROSE_SHORT_LITERAL_LEN_MAX 8
 
 struct BoundaryReports;
 struct CastleProto;
@@ -162,7 +178,6 @@ depth findMinWidth(const suffix_id &s);
 depth findMaxWidth(const suffix_id &s);
 depth findMinWidth(const suffix_id &s, u32 top);
 depth findMaxWidth(const suffix_id &s, u32 top);
-size_t hash_value(const suffix_id &s);
 
 /** \brief represents an engine to the left of a rose role */
 struct left_id {
@@ -239,20 +254,18 @@ private:
 };
 
 std::set<u32> all_tops(const left_id &r);
+std::set<ReportID> all_reports(const left_id &left);
 bool isAnchored(const left_id &r);
 depth findMinWidth(const left_id &r);
 depth findMaxWidth(const left_id &r);
 u32 num_tops(const left_id &r);
-size_t hash_value(const left_id &r);
 
 struct rose_literal_info {
-    ue2::flat_set<u32> delayed_ids;
-    ue2::flat_set<RoseVertex> vertices;
+    flat_set<u32> delayed_ids;
+    flat_set<RoseVertex> vertices;
     rose_group group_mask = 0;
     u32 undelayed_id = MO_INVALID_IDX;
-    u32 final_id = MO_INVALID_IDX; /* id reported by fdr */
     bool squash_group = false;
-    bool requires_explode = false;
     bool requires_benefits = false;
 };
 
@@ -288,6 +301,15 @@ struct rose_literal_id {
         }
         return MAX(mask_len, s.length()) + delay;
     }
+
+    bool operator==(const rose_literal_id &b) const {
+        return s == b.s && msk == b.msk && cmp == b.cmp && table == b.table &&
+               delay == b.delay && distinctiveness == b.distinctiveness;
+    }
+
+    size_t hash() const {
+        return hash_all(s, msk, cmp, table, delay, distinctiveness);
+    }
 };
 
 static inline
@@ -301,8 +323,54 @@ bool operator<(const rose_literal_id &a, const rose_literal_id &b) {
     return 0;
 }
 
-// Literals are stored in a map from (string, nocase) -> ID
-typedef boost::bimap<rose_literal_id, u32> RoseLiteralMap;
+class RoseLiteralMap {
+    /**
+     * \brief Main storage for literals.
+     *
+     * Note that this cannot be a vector, as the present code relies on
+     * iterator stability when iterating over this list and adding to it inside
+     * the loop.
+     */
+    std::deque<rose_literal_id> lits;
+
+    /** \brief Quick-lookup index from literal -> index in lits. */
+    ue2_unordered_map<rose_literal_id, u32> lits_index;
+
+public:
+    std::pair<u32, bool> insert(const rose_literal_id &lit) {
+        auto it = lits_index.find(lit);
+        if (it != lits_index.end()) {
+            return {it->second, false};
+        }
+        u32 id = verify_u32(lits.size());
+        lits.push_back(lit);
+        lits_index.emplace(lit, id);
+        return {id, true};
+    }
+
+    // Erase the last num elements.
+    void erase_back(size_t num) {
+        assert(num <= lits.size());
+        for (size_t i = 0; i < num; i++) {
+            lits_index.erase(lits.back());
+            lits.pop_back();
+        }
+        assert(lits.size() == lits_index.size());
+    }
+
+    const rose_literal_id &at(u32 id) const {
+        assert(id < lits.size());
+        return lits.at(id);
+    }
+
+    using const_iterator = decltype(lits)::const_iterator;
+    const_iterator begin() const { return lits.begin(); }
+    const_iterator end() const { return lits.end(); }
+
+    size_t size() const {
+        return lits.size();
+    }
+};
 
 struct simple_anchored_info {
     simple_anchored_info(u32 min_b, u32 max_b, const ue2_literal &lit)
@@ -413,8 +481,8 @@ struct OutfixInfo {
 
     RevAccInfo rev_info;
     u32 maxBAWidth = 0; //!< max bi-anchored width
-    depth minWidth = depth::infinity();
-    depth maxWidth = 0;
+    depth minWidth{depth::infinity()};
+    depth maxWidth{0};
     u64a maxOffset = 0;
     bool in_sbmatcher = false; //!< handled by small-block matcher.
 
@@ -434,10 +502,9 @@ public:
 
     // Adds a single literal.
     void add(bool anchored, bool eod, const ue2_literal &lit,
-             const ue2::flat_set<ReportID> &ids) override;
+             const flat_set<ReportID> &ids) override;
 
-    bool addRose(const RoseInGraph &ig, bool prefilter,
-                 bool finalChance = false) override;
+    bool addRose(const RoseInGraph &ig, bool prefilter) override;
     bool addSombeRose(const RoseInGraph &ig) override;
 
     bool addOutfix(const NGHolder &h) override;
@@ -448,20 +515,20 @@ public:
 
     // Returns true if we were able to add it as a mask
     bool add(bool anchored, const std::vector<CharReach> &mask,
-             const ue2::flat_set<ReportID> &reports) override;
+             const flat_set<ReportID> &reports) override;
 
     bool addAnchoredAcyclic(const NGHolder &graph) override;
 
     bool validateMask(const std::vector<CharReach> &mask,
-                      const ue2::flat_set<ReportID> &reports, bool anchored,
+                      const flat_set<ReportID> &reports, bool anchored,
                       bool eod) const override;
     void addMask(const std::vector<CharReach> &mask,
-                 const ue2::flat_set<ReportID> &reports, bool anchored,
+                 const flat_set<ReportID> &reports, bool anchored,
                  bool eod) override;
 
     // Construct a runtime implementation.
-    aligned_unique_ptr<RoseEngine> buildRose(u32 minWidth) override;
-    aligned_unique_ptr<RoseEngine> buildFinalEngine(u32 minWidth);
+    bytecode_ptr<RoseEngine> buildRose(u32 minWidth) override;
+    bytecode_ptr<RoseEngine> buildFinalEngine(u32 minWidth);
 
     void setSom() override { hasSom = true; }
 
@@ -479,16 +546,12 @@ public:
                      const std::vector<u8> &cmp, u32 delay,
                      rose_literal_table table);
 
-    bool hasLiteral(const ue2_literal &s, rose_literal_table table) const;
-
     u32 getNewLiteralId(void);
 
     void removeVertices(const std::vector<RoseVertex> &dead);
 
     // Is the Rose anchored?
     bool hasNoFloatingRoots() const;
-
-    RoseVertex cloneVertex(RoseVertex v);
 
     u32 calcHistoryRequired() const;
 
@@ -510,8 +573,6 @@ public:
     bool isDirectReport(u32 id) const;
     bool isDelayed(u32 id) const;
 
-    bool hasFinalId(u32 id) const;
-
     bool isAnchored(RoseVertex v) const; /* true iff has literal in anchored
                                           * table */
     bool isFloating(RoseVertex v) const; /* true iff has literal in floating
@@ -524,8 +585,6 @@ public:
 
     // max overlap considered for every pair (ulit, vlit).
     size_t maxLiteralOverlap(RoseVertex u, RoseVertex v) const;
-
-    void renumberVertices(void);
 
     bool isPseudoStar(const RoseEdge &e) const;
     bool isPseudoStarOrFirstOnly(const RoseEdge &e) const;
@@ -549,38 +608,25 @@ public:
     const RoseVertex anchored_root;
     RoseLiteralMap literals;
     std::map<RoseVertex, RoseVertex> ghost;
-    size_t vertexIndex;
     ReportID getNewNfaReport() override {
         return next_nfa_report++;
     }
     std::deque<rose_literal_info> literal_info;
-    u32 delay_base_id;
     bool hasSom; //!< at least one pattern requires SOM.
     std::map<size_t, std::vector<std::unique_ptr<raw_dfa>>> anchored_nfas;
     std::map<simple_anchored_info, std::set<u32>> anchored_simple;
     std::map<u32, std::set<u32> > group_to_literal;
     u32 group_end;
 
-    u32 anchored_base_id;
-
     u32 ematcher_region_size; /**< number of bytes the eod table runs over */
-
-    /** \brief Mapping from leftfix to queue ID (used in dump code). */
-    unordered_map<left_id, u32> leftfix_queue_map;
-
-    /** \brief Mapping from suffix to queue ID (used in dump code). */
-    unordered_map<suffix_id, u32> suffix_queue_map;
 
     /** \brief Mapping from anchored literal ID to the original literal suffix
      * present when the literal was added to the literal matcher. Used for
      * overlap calculation in history assignment. */
     std::map<u32, rose_literal_id> anchoredLitSuffix;
 
-    std::map<u32, std::set<u32> > final_id_to_literal; /* final literal id to
-                                                        * literal id */
-
-    unordered_set<left_id> transient;
-    unordered_map<left_id, rose_group> rose_squash_masks;
+    ue2_unordered_set<left_id> transient;
+    ue2_unordered_map<left_id, rose_group> rose_squash_masks;
 
     std::vector<OutfixInfo> outfixes;
 
@@ -593,6 +639,8 @@ public:
 
     u32 max_rose_anchored_floating_overlap;
 
+    rose_group boundary_group_mask = 0;
+
     QueueIndexFactory qif;
     ReportManager &rm;
     SomSlotManager &ssm;
@@ -603,6 +651,9 @@ private:
     ReportID next_nfa_report;
 };
 
+size_t calcLongLitThreshold(const RoseBuildImpl &build,
+                            const size_t historyRequired);
+
 // Free functions, in rose_build_misc.cpp
 
 bool hasAnchHistorySucc(const RoseGraph &g, RoseVertex v);
@@ -612,10 +663,9 @@ size_t maxOverlap(const rose_literal_id &a, const rose_literal_id &b);
 ue2_literal findNonOverlappingTail(const std::set<ue2_literal> &lits,
                                    const ue2_literal &s);
 
-void setReportId(NGHolder &g, ReportID id);
-
 #ifndef NDEBUG
-bool roseHasTops(const RoseGraph &g, RoseVertex v);
+bool roseHasTops(const RoseBuildImpl &build, RoseVertex v);
+bool hasOrphanedTops(const RoseBuildImpl &build);
 #endif
 
 u64a findMaxOffset(const std::set<ReportID> &reports, const ReportManager &rm);
@@ -626,10 +676,33 @@ u64a findMaxOffset(const std::set<ReportID> &reports, const ReportManager &rm);
 void normaliseLiteralMask(const ue2_literal &s, std::vector<u8> &msk,
                           std::vector<u8> &cmp);
 
+u32 findMinOffset(const RoseBuildImpl &build, u32 lit_id);
+u32 findMaxOffset(const RoseBuildImpl &build, u32 lit_id);
+
+bool canEagerlyReportAtEod(const RoseBuildImpl &build, const RoseEdge &e);
+
 #ifndef NDEBUG
 bool canImplementGraphs(const RoseBuildImpl &tbi);
 #endif
 
 } // namespace ue2
 
-#endif /* ROSE_BUILD_IMPL_H_17E20A3C6935D6 */
+namespace std {
+
+template<>
+struct hash<ue2::left_id> {
+    size_t operator()(const ue2::left_id &l) const {
+        return l.hash();
+    }
+};
+
+template<>
+struct hash<ue2::suffix_id> {
+    size_t operator()(const ue2::suffix_id &s) const {
+        return s.hash();
+    }
+};
+
+} // namespace std
+
+#endif /* ROSE_BUILD_IMPL_H */

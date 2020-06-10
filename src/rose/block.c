@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -145,6 +145,7 @@ void init_for_block(const struct RoseEngine *t, struct hs_scratch *scratch,
     tctxt->lastEndOffset = 0;
     tctxt->filledDelayedSlots = 0;
     tctxt->lastMatchOffset = 0;
+    tctxt->lastCombMatchOffset = 0;
     tctxt->minMatchOffset = 0;
     tctxt->minNonMpvMatchOffset = 0;
     tctxt->next_mpv_offset = 0;
@@ -178,13 +179,11 @@ void roseBlockEodExec(const struct RoseEngine *t, u64a offset,
     assert(!scratch->tctxt.filledDelayedSlots);
 
     const u64a som = 0;
-    const size_t match_len = 0;
     const u8 flags = ROSE_PROG_FLAG_SKIP_MPV_CATCHUP;
 
     // Note: we ignore the result, as this is the last thing to ever happen on
     // a scan.
-    roseRunProgram(t, scratch, t->eodProgramOffset, som, offset, match_len,
-                   flags);
+    roseRunProgram(t, scratch, t->eodProgramOffset, som, offset, flags);
 }
 
 /**

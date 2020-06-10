@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -53,15 +53,15 @@ TEST(NFAGraph, RemoveRedundancy1) {
     // The character reachability should be merged into: [ab]c
     CompileContext cc(false, false, get_current_target(), Grey());
 
-    unique_ptr<NGWrapper> graph(constructGraphWithCC("(a|b)c", cc, 0));
+    auto graph(constructGraphWithCC("(a|b)c", cc, 0));
     ASSERT_TRUE(graph.get() != nullptr);
+    NGHolder &g = *graph;
 
     // Run removeRedundancy
-    removeRedundancy(*graph, SOM_NONE);
-    NFAGraph &g = graph->g;
+    removeRedundancy(g, SOM_NONE);
 
     // Our graph should only have two non-special nodes
-    ASSERT_EQ((size_t)N_SPECIALS + 2, num_vertices(*graph));
+    ASSERT_EQ((size_t)N_SPECIALS + 2, num_vertices(g));
 
     // Dot-star start state should be connected to itself and a single other
     // vertex
@@ -95,16 +95,15 @@ TEST(NFAGraph, RemoveRedundancy2) {
     // Build a small graph with a redundant vertex: a.*b?c
     // The dot-star should swallow the 'b?', leaving a.*c
     CompileContext cc(false, false, get_current_target(), Grey());
-    unique_ptr<NGWrapper> graph(constructGraphWithCC("a.*b?c", cc,
-                                                     HS_FLAG_DOTALL));
+    auto graph(constructGraphWithCC("a.*b?c", cc, HS_FLAG_DOTALL));
     ASSERT_TRUE(graph.get() != nullptr);
+    NGHolder &g = *graph;
 
     // Run removeRedundancy
-    removeRedundancy(*graph, SOM_NONE);
-    NFAGraph &g = graph->g;
+    removeRedundancy(g, SOM_NONE);
 
     // Our graph should now have only 3 non-special vertices
-    ASSERT_EQ((size_t)N_SPECIALS + 3, num_vertices(*graph));
+    ASSERT_EQ((size_t)N_SPECIALS + 3, num_vertices(g));
 
     // Dot-star start state should be connected to itself and a single other
     // vertex
@@ -152,42 +151,40 @@ TEST(NFAGraph, RemoveRedundancy2) {
 
 TEST(NFAGraph, RemoveRedundancy3) {
     CompileContext cc(false, false, get_current_target(), Grey());
-    unique_ptr<NGWrapper> graph(constructGraphWithCC("foobar.*(a|b)?teakettle",
-                                                     cc, 0));
+    auto graph(constructGraphWithCC("foobar.*(a|b)?teakettle", cc, 0));
     ASSERT_TRUE(graph.get() != nullptr);
 
-    unsigned countBefore = num_vertices(graph->g);
+    unsigned countBefore = num_vertices(*graph);
     removeRedundancy(*graph, SOM_NONE);
 
     // The '(a|b)?' construction (two states) should have disappeared, leaving
     // this expr as 'foobar.*teakettle'
-    ASSERT_EQ(countBefore - 2, num_vertices(graph->g));
+    ASSERT_EQ(countBefore - 2, num_vertices(*graph));
 }
 
 TEST(NFAGraph, RemoveRedundancy4) {
     CompileContext cc(false, false, get_current_target(), Grey());
-    unique_ptr<NGWrapper> graph(constructGraphWithCC("foo([A-Z]|a|b|q)", cc, 0));
+    auto graph(constructGraphWithCC("foo([A-Z]|a|b|q)", cc, 0));
     ASSERT_TRUE(graph.get() != nullptr);
 
-    unsigned countBefore = num_vertices(graph->g);
+    unsigned countBefore = num_vertices(*graph);
     removeRedundancy(*graph, SOM_NONE);
 
     // We should end up with the alternation collapsing into one state
-    ASSERT_EQ(countBefore - 3, num_vertices(graph->g));
+    ASSERT_EQ(countBefore - 3, num_vertices(*graph));
 }
 
 TEST(NFAGraph, RemoveRedundancy5) {
     CompileContext cc(false, false, get_current_target(), Grey());
-    unique_ptr<NGWrapper> graph(constructGraphWithCC("[0-9]?badgerbrush",
-            cc, 0));
+    auto graph(constructGraphWithCC("[0-9]?badgerbrush", cc, 0));
     ASSERT_TRUE(graph.get() != nullptr);
 
-    unsigned countBefore = num_vertices(graph->g);
+    unsigned countBefore = num_vertices(*graph);
     removeRedundancy(*graph, SOM_NONE);
 
     // Since we don't return a start offset, the first state ('[0-9]?') is
     // redundant.
-    ASSERT_EQ(countBefore - 1, num_vertices(graph->g));
+    ASSERT_EQ(countBefore - 1, num_vertices(*graph));
 }
 
 TEST(NFAGraph, RemoveEdgeRedundancy1) {
@@ -196,12 +193,12 @@ TEST(NFAGraph, RemoveEdgeRedundancy1) {
     auto graph = constructGraphWithCC("A+hatstand", cc, HS_FLAG_DOTALL);
     ASSERT_TRUE(graph.get() != nullptr);
 
-    unsigned countBefore = num_edges(graph->g);
+    unsigned countBefore = num_edges(*graph);
 
     removeEdgeRedundancy(*graph, SOM_NONE, cc);
 
     // One edge (the self-loop on the leading A+) should have been removed.
-    ASSERT_EQ(countBefore - 1, num_edges(graph->g));
+    ASSERT_EQ(countBefore - 1, num_edges(*graph));
 }
 
 TEST(NFAGraph, RemoveEdgeRedundancy2) {
@@ -210,12 +207,12 @@ TEST(NFAGraph, RemoveEdgeRedundancy2) {
     auto graph = constructGraphWithCC("foo.*A*bar", cc, HS_FLAG_DOTALL);
     ASSERT_TRUE(graph.get() != nullptr);
 
-    size_t numEdgesBefore = num_edges(graph->g);
-    size_t numVertsBefore = num_vertices(graph->g);
+    size_t numEdgesBefore = num_edges(*graph);
+    size_t numVertsBefore = num_vertices(*graph);
 
     removeEdgeRedundancy(*graph, SOM_NONE, cc);
 
     // The .* should swallow up the A* and its self-loop.
-    ASSERT_EQ(numEdgesBefore - 4, num_edges(graph->g));
-    ASSERT_EQ(numVertsBefore - 1, num_vertices(graph->g));
+    ASSERT_EQ(numEdgesBefore - 4, num_edges(*graph));
+    ASSERT_EQ(numVertsBefore - 1, num_vertices(*graph));
 }

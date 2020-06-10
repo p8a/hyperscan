@@ -10,7 +10,7 @@ Very Quick Start
 #. Clone Hyperscan ::
 
      cd <where-you-want-hyperscan-source>
-     git clone git://github/01org/hyperscan
+     git clone git://github.com/intel/hyperscan
 
 #. Configure Hyperscan
 
@@ -27,10 +27,10 @@ Very Quick Start
    Known working generators:
       * ``Unix Makefiles`` --- make-compatible makefiles (default on Linux/FreeBSD/Mac OS X)
       * ``Ninja`` --- `Ninja <http://martine.github.io/ninja/>`_ build files.
+      * ``Visual Studio 15 2017`` --- Visual Studio projects
 
    Generators that might work include:
       * ``Xcode`` --- OS X Xcode projects.
-      * ``Visual Studio`` --- Visual Studio projects - very experimental
 
 #. Build Hyperscan
 
@@ -38,6 +38,7 @@ Very Quick Start
      * ``cmake --build .`` --- will build everything
      * ``make -j<jobs>`` --- use makefiles in parallel
      * ``ninja`` --- use Ninja build
+     * ``MsBuild.exe`` --- use Visual Studio MsBuild
      * etc.
 
 #. Check Hyperscan
@@ -48,6 +49,8 @@ Very Quick Start
 
 Requirements
 ************
+
+.. _hardware:
 
 Hardware
 ========
@@ -84,6 +87,7 @@ compiler support. The supported compilers are:
     * GCC, v4.8.1 or higher
     * Clang, v3.4 or higher (with libstdc++ or libc++)
     * Intel C++ Compiler v15 or higher
+    * Visual C++ 2017 Build Tools
 
 Examples of operating systems that Hyperscan is known to work on include:
 
@@ -96,13 +100,17 @@ FreeBSD:
 
 * 10.0 or newer
 
+Windows:
+
+* 8 or newer
+
 Mac OS X:
 
 * 10.8 or newer, using XCode/Clang
 
 Hyperscan *may* compile and run on other platforms, but there is no guarantee.
 We currently have experimental support for Windows using Intel C++ Compiler
-or Visual Studio 2015.
+or Visual Studio 2017.
 
 In addition, the following software is required for compiling the Hyperscan library:
 
@@ -118,7 +126,8 @@ Dependency                                              Version     Notes
 
 Most of these dependencies can be provided by the package manager on the build
 system (e.g. Debian/Ubuntu/RedHat packages, FreeBSD ports, etc). However,
-ensure that the correct version is present.
+ensure that the correct version is present. As for Windows, in order to have
+Ragel, you may use Cygwin to build it from source.
 
 Boost Headers
 -------------
@@ -169,6 +178,9 @@ Common options for CMake include:
 +------------------------+----------------------------------------------------+
 | DEBUG_OUTPUT           | Enable very verbose debug output. Default off.     |
 +------------------------+----------------------------------------------------+
+| FAT_RUNTIME            | Build the :ref:`fat runtime<fat_runtime>`. Default |
+|                        | true on Linux, not available elsewhere.            |
++------------------------+----------------------------------------------------+
 
 For example, to generate a ``Debug`` build: ::
 
@@ -199,11 +211,11 @@ The other types of builds are:
 Target Architecture
 -------------------
 
-By default, Hyperscan will be compiled to target the instruction set of the
-processor of the machine that being used for compilation. This is done via
-the use of ``-march=native``. The result of this means that a library built on
-one machine may not work on a different machine if they differ in supported
-instruction subsets.
+Unless using the :ref:`fat runtime<fat_runtime>`, by default Hyperscan will be
+compiled to target the instruction set of the processor of the machine that
+being used for compilation. This is done via the use of ``-march=native``. The
+result of this means that a library built on one machine may not work on a
+different machine if they differ in supported instruction subsets.
 
 To override the use of ``-march=native``, set appropriate flags for the
 compiler in ``CFLAGS`` and ``CXXFLAGS`` environment variables before invoking
@@ -215,3 +227,71 @@ example, to set the instruction subsets up to ``SSE4.2`` using GCC 4.8: ::
 
 For more information, refer to :ref:`instr_specialization`.
 
+.. _fat_runtime:
+
+Fat Runtime
+-----------
+
+A feature introduced in Hyperscan v4.4 is the ability for the Hyperscan
+library to dispatch the most appropriate runtime code for the host processor.
+This feature is called the "fat runtime", as a single Hyperscan library
+contains multiple copies of the runtime code for different instruction sets.
+
+.. note::
+
+    The fat runtime feature is only available on Linux. Release builds of
+    Hyperscan will default to having the fat runtime enabled where supported.
+
+When building the library with the fat runtime, the Hyperscan runtime code
+will be compiled multiple times for these different instruction sets, and
+these compiled objects are combined into one library. There are no changes to
+how user applications are built against this library.
+
+When applications are executed, the correct version of the runtime is selected
+for the machine that it is running on. This is done using a ``CPUID`` check
+for the presence of the instruction set, and then an indirect function is
+resolved so that the right version of each API function is used. There is no
+impact on function call performance, as this check and resolution is performed
+by the ELF loader once when the binary is loaded.
+
+If the Hyperscan library is used on x86 systems without ``SSSE3``, the runtime
+API functions will resolve to functions that return :c:member:`HS_ARCH_ERROR`
+instead of potentially executing illegal instructions. The API function
+:c:func:`hs_valid_platform` can be used by application writers to determine if
+the current platform is supported by Hyperscan.
+
+As of this release, the variants of the runtime that are built, and the CPU
+capability that is required, are the following:
+
++----------+-------------------------------+---------------------------+
+| Variant  | CPU Feature Flag(s) Required  | gcc arch flag             |
++==========+===============================+===========================+
+| Core 2   | ``SSSE3``                     | ``-march=core2``          |
++----------+-------------------------------+---------------------------+
+| Core i7  | ``SSE4_2`` and ``POPCNT``     | ``-march=corei7``         |
++----------+-------------------------------+---------------------------+
+| AVX 2    | ``AVX2``                      | ``-march=core-avx2``      |
++----------+-------------------------------+---------------------------+
+| AVX 512  | ``AVX512BW`` (see note below) | ``-march=skylake-avx512`` |
++----------+-------------------------------+---------------------------+
+
+.. note::
+
+    Hyperscan v4.5 adds support for AVX-512 instructions - in particular the
+    ``AVX-512BW`` instruction set that was introduced on Intel "Skylake" Xeon
+    processors - however the AVX-512 runtime variant is **not** enabled by
+    default in fat runtime builds as not all toolchains support AVX-512
+    instruction sets. To build an AVX-512 runtime, the CMake variable
+    ``BUILD_AVX512`` must be enabled manually during configuration. For
+    example: ::
+
+        cmake -DBUILD_AVX512=on <...>
+
+As the fat runtime requires compiler, libc, and binutils support, at this time
+it will only be enabled for Linux builds where the compiler supports the
+`indirect function "ifunc" function attribute
+<https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-indirect-functions-3321>`_.
+
+This attribute should be available on all supported versions of GCC, and
+recent versions of Clang and ICC. There is currently no operating system
+support for this feature on non-Linux systems.

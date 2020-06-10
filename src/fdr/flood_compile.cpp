@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,6 +30,7 @@
 #include "fdr_confirm.h"
 #include "fdr_compile_internal.h"
 #include "fdr_engine_description.h"
+#include "grey.h"
 #include "ue2common.h"
 #include "util/alloc.h"
 #include "util/bitutils.h"
@@ -81,18 +82,17 @@ void addFlood(vector<FDRFlood> &tmpFlood, u8 c, const hwlmLiteral &lit,
         fl.ids[fl.idCount] = lit.id;
         fl.allGroups |= lit.groups;
         fl.groups[fl.idCount] = lit.groups;
-        fl.len[fl.idCount] = suffix;
         // when idCount gets to max_ids this flood no longer happens
         // only incremented one more time to avoid arithmetic overflow
         DEBUG_PRINTF("Added Flood for char '%c' suffix=%u len[%hu]=%u\n",
-                                        c, fl.suffix, fl.idCount, suffix);
+                     c, fl.suffix, fl.idCount, suffix);
         fl.idCount++;
    }
 }
 
-pair<aligned_unique_ptr<u8>, size_t>
-setupFDRFloodControl(const vector<hwlmLiteral> &lits,
-                     const EngineDescription &eng) {
+bytecode_ptr<u8> setupFDRFloodControl(const vector<hwlmLiteral> &lits,
+                                      const EngineDescription &eng,
+                                      const Grey &grey) {
     vector<FDRFlood> tmpFlood(N_CHARS);
     u32 default_suffix = eng.getDefaultFloodSuffixLength();
 
@@ -181,11 +181,18 @@ setupFDRFloodControl(const vector<hwlmLiteral> &lits,
         printf("i is %02x fl->idCount is %hd fl->suffix is %d fl->allGroups is "
                "%016llx\n", i, fl.idCount, fl.suffix, fl.allGroups);
         for (u32 j = 0; j < fl.idCount; j++) {
-            printf("j is %d fl.groups[j] %016llx fl.len[j] %d \n", j,
-                   fl.groups[j], fl.len[j]);
+            printf("j is %d fl.groups[j] %016llx\n", j, fl.groups[j]);
         }
     }
 #endif
+
+    // If flood detection has been switched off in the grey box, we comply by
+    // setting idCount too high for all floods.
+    if (!grey.fdrAllowFlood) {
+        for (auto &fl : tmpFlood) {
+            fl.idCount = FDR_FLOOD_MAX_IDS;
+        }
+    }
 
     map<FDRFlood, CharReach, FloodComparator> flood2chars;
     for (u32 i = 0; i < N_CHARS; i++) {
@@ -198,7 +205,7 @@ setupFDRFloodControl(const vector<hwlmLiteral> &lits,
     size_t floodStructSize = sizeof(FDRFlood) * nDistinctFloods;
     size_t totalSize = ROUNDUP_16(floodHeaderSize + floodStructSize);
 
-    auto buf = aligned_zmalloc_unique<u8>(totalSize);
+    auto buf = make_zeroed_bytecode_ptr<u8>(totalSize, 16);
     assert(buf); // otherwise would have thrown std::bad_alloc
 
     u32 *floodHeader = (u32 *)buf.get();
@@ -218,7 +225,7 @@ setupFDRFloodControl(const vector<hwlmLiteral> &lits,
     DEBUG_PRINTF("made a flood structure with %zu + %zu = %zu\n",
                  floodHeaderSize, floodStructSize, totalSize);
 
-    return {move(buf), totalSize};
+    return buf;
 }
 
 } // namespace ue2

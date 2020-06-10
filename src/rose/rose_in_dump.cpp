@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -35,6 +35,7 @@
 #include "nfagraph/ng_dump.h"
 #include "nfagraph/ng_util.h"
 #include "util/container.h"
+#include "util/dump_util.h"
 #include "util/graph_range.h"
 
 #include <cstdio>
@@ -59,7 +60,7 @@ void dumpPreRoseGraph(const RoseInGraph &ig, const Grey &grey,
         filename = "pre_rose.dot";
     }
     DEBUG_PRINTF("dumping rose graphs\n");
-    FILE *f = fopen((grey.dumpPath + filename).c_str(), "w");
+    StdioFile f(grey.dumpPath + filename, "w");
     fprintf(f, "digraph NFA {\n");
     fprintf(f, "rankdir=LR;\n");
     fprintf(f, "size=\"11.5,8\"\n");
@@ -122,12 +123,11 @@ void dumpPreRoseGraph(const RoseInGraph &ig, const Grey &grey,
 
         ostringstream name;
         name << grey.dumpPath << "pre_rose_" << id << ".dot";
-        dumpGraph(name.str().c_str(), h->g);
+        dumpGraph(name.str().c_str(), *h);
         assert(allMatchStatesHaveReports(*h));
     }
 
     fprintf(f, "}\n");
-    fclose(f);
 }
 
 }

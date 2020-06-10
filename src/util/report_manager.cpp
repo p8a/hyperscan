@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -29,9 +29,12 @@
 /** \file
  * \brief ReportManager: tracks Report structures, exhaustion and dedupe keys.
  */
-#include "grey.h"
+
 #include "report_manager.h"
+
+#include "grey.h"
 #include "ue2common.h"
+#include "compiler/compiler.h"
 #include "nfagraph/ng.h"
 #include "rose/rose_build.h"
 #include "util/compile_error.h"
@@ -64,7 +67,7 @@ u32 ReportManager::getInternalId(const Report &ir) {
 
     u32 size = reportIds.size();
     reportIds.push_back(ir);
-    reportIdToInternalMap[ir] = size;
+    reportIdToInternalMap.emplace(ir, size);
     DEBUG_PRINTF("new report %u\n", size);
     return size;
 }
@@ -92,6 +95,31 @@ u32 ReportManager::getExhaustibleKey(u32 a) {
     return it->second;
 }
 
+const set<u32> &ReportManager::getRelateCKeys(u32 lkey) {
+    auto it = pl.lkey2ckeys.find(lkey);
+    assert(it != pl.lkey2ckeys.end());
+    return it->second;
+}
+
+void ReportManager::logicalKeyRenumber() {
+    pl.logicalKeyRenumber();
+    // assign to corresponding report
+    for (u32 i = 0; i < reportIds.size(); i++) {
+        Report &ir = reportIds[i];
+        if (contains(pl.toLogicalKeyMap, ir.onmatch)) {
+            ir.lkey = pl.toLogicalKeyMap.at(ir.onmatch);
+        }
+    }
+}
+
+const vector<LogicalOp> &ReportManager::getLogicalTree() const {
+    return pl.logicalTree;
+}
+
+const vector<CombInfo> &ReportManager::getCombInfoMap() const {
+    return pl.combInfoMap;
+}
+
 u32 ReportManager::getUnassociatedExhaustibleKey(void) {
     u32 rv = toExhaustibleKeyMap.size();
     bool inserted;
@@ -112,6 +140,18 @@ u32 ReportManager::numEkeys() const {
     return (u32) toExhaustibleKeyMap.size();
 }
 
+u32 ReportManager::numLogicalKeys() const {
+    return (u32) pl.toLogicalKeyMap.size();
+}
+
+u32 ReportManager::numLogicalOps() const {
+    return (u32) pl.logicalTree.size();
+}
+
+u32 ReportManager::numCkeys() const {
+    return (u32) pl.toCombKeyMap.size();
+}
+
 bool ReportManager::patternSetCanExhaust() const {
     return global_exhaust && !toExhaustibleKeyMap.empty();
 }
@@ -130,7 +170,7 @@ vector<ReportID> ReportManager::getDkeyToReportTable() const {
 void ReportManager::assignDkeys(const RoseBuild *rose) {
     DEBUG_PRINTF("assigning...\n");
 
-    map<u32, ue2::flat_set<ReportID>> ext_to_int;
+    map<u32, flat_set<ReportID>> ext_to_int;
 
     for (u32 i = 0; i < reportIds.size(); i++) {
         const Report &ir = reportIds[i];
@@ -171,8 +211,9 @@ u32 ReportManager::getDkey(const Report &r) const {
 
 void ReportManager::registerExtReport(ReportID id,
                                       const external_report_info &ext) {
-    if (contains(externalIdMap, id)) {
-        const external_report_info &eri = externalIdMap.at(id);
+    auto it = externalIdMap.find(id);
+    if (it != externalIdMap.end()) {
+        const external_report_info &eri = it->second;
         if (eri.highlander != ext.highlander) {
             /* we have a problem */
             ostringstream out;
@@ -201,20 +242,21 @@ void ReportManager::registerExtReport(ReportID id,
     }
 }
 
-Report ReportManager::getBasicInternalReport(const NGWrapper &g, s32 adj) {
+Report ReportManager::getBasicInternalReport(const ExpressionInfo &expr,
+                                             s32 adj) {
     /* validate that we are not violating highlander constraints, this will
      * throw a CompileError if so. */
-    registerExtReport(g.reportId,
-                      external_report_info(g.highlander, g.expressionIndex));
+    registerExtReport(expr.report,
+                      external_report_info(expr.highlander, expr.index));
 
     /* create the internal report */
     u32 ekey = INVALID_EKEY;
-    if (g.highlander) {
+    if (expr.highlander) {
         /* all patterns with the same report id share an ekey */
-        ekey = getExhaustibleKey(g.reportId);
+        ekey = getExhaustibleKey(expr.report);
     }
 
-    return makeECallback(g.reportId, adj, ekey);
+    return makeECallback(expr.report, adj, ekey, expr.quiet);
 }
 
 void ReportManager::setProgramOffset(ReportID id, u32 programOffset) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -36,6 +36,7 @@
 #ifndef SCRATCH_H_DA6D4FC06FF410
 #define SCRATCH_H_DA6D4FC06FF410
 
+#include "hs_common.h"
 #include "ue2common.h"
 #include "rose/rose_types.h"
 
@@ -45,7 +46,6 @@ extern "C"
 #endif
 
 UNUSED static const u32 SCRATCH_MAGIC = 0x544F4259;
-#define FDR_TEMP_BUF_SIZE 220
 
 struct fatbit;
 struct hs_scratch;
@@ -73,25 +73,34 @@ struct catchup_pq {
 /** \brief Status flag: user requested termination. */
 #define STATUS_TERMINATED   (1U << 0)
 
-/** \brief Status flag: all possible matches on this stream have
- * been raised (i.e. all its exhaustion keys are on.) */
+/** \brief Status flag: it has been determined that it is not possible for this
+ * stream to raise any more matches.
+ *
+ * This may be because all its exhaustion keys are on or for other reasons
+ * (anchored sections not matching). */
 #define STATUS_EXHAUSTED    (1U << 1)
 
 /** \brief Status flag: Rose requires rebuild as delay literal matched in
  * history. */
 #define STATUS_DELAY_DIRTY  (1U << 2)
 
+/** \brief Status flag: Unexpected Rose program error. */
+#define STATUS_ERROR        (1U << 3)
+
 /** \brief Core information about the current scan, used everywhere. */
 struct core_info {
     void *userContext; /**< user-supplied context */
 
     /** \brief user-supplied match callback */
-    int (*userCallback)(unsigned int id, unsigned long long from,
-                        unsigned long long to, unsigned int flags, void *ctx);
+    int (HS_CDECL *userCallback)(unsigned int id, unsigned long long from,
+                                 unsigned long long to, unsigned int flags,
+                                 void *ctx);
 
     const struct RoseEngine *rose;
     char *state; /**< full stream state */
     char *exhaustionVector; /**< pointer to evec for this stream */
+    char *logicalVector; /**< pointer to lvec for this stream */
+    char *combVector; /**< pointer to cvec for this stream */
     const u8 *buf; /**< main scan buffer */
     size_t len; /**< length of main scan buffer in bytes */
     const u8 *hbuf; /**< history buffer */
@@ -113,6 +122,7 @@ struct RoseContext {
                          * stream */
     u64a lastMatchOffset; /**< last match offset report up out of rose;
                            * used _only_ for debugging, asserts */
+    u64a lastCombMatchOffset; /**< last match offset of active combinations */
     u64a minMatchOffset; /**< the earliest offset that we are still allowed to
                           * report */
     u64a minNonMpvMatchOffset; /**< the earliest offset that non-mpv engines are
@@ -122,12 +132,33 @@ struct RoseContext {
     u32 filledDelayedSlots;
     u32 curr_qi;    /**< currently executing main queue index during
                      * \ref nfaQueueExec */
+
+    /**
+     * \brief Buffer for caseful long literal support, used in streaming mode
+     * only.
+     *
+     * If a long literal prefix was at the end of the buffer at the end of a
+     * stream write, then the long lit table hashes it and stores the result in
+     * stream state. At the start of the next write, this value is used to set
+     * this buffer to the matching prefix string (stored in the bytecode.
+     */
+    const u8 *ll_buf;
+
+    /** \brief Length in bytes of the string pointed to by ll_buf. */
+    size_t ll_len;
+
+    /** \brief Caseless version of ll_buf. */
+    const u8 *ll_buf_nocase;
+
+    /** \brief Length in bytes of the string pointed to by ll_buf_nocase. */
+    size_t ll_len_nocase;
 };
 
 struct match_deduper {
     struct fatbit *log[2]; /**< even, odd logs */
     struct fatbit *som_log[2]; /**< even, odd fatbit logs for som */
     u64a *som_start_log[2]; /**< even, odd start offset logs for som */
+    u32 dkey_count;
     u32 log_size;
     u64a current_report_offset;
     u8 som_log_dirty;
@@ -142,6 +173,7 @@ struct ALIGN_CL_DIRECTIVE hs_scratch {
     u32 magic;
     u8 in_use; /**< non-zero when being used by an API call. */
     u32 queueCount;
+    u32 activeQueueArraySize; /**< size of active queue array fatbit in bytes */
     u32 bStateSize; /**< sizeof block mode states */
     u32 tStateSize; /**< sizeof transient rose states */
     u32 fullStateSize; /**< size of uncompressed nfa state */
@@ -159,7 +191,7 @@ struct ALIGN_CL_DIRECTIVE hs_scratch {
     struct core_info core_info;
     struct match_deduper deduper;
     u32 anchored_literal_region_len;
-    u32 anchored_literal_count;
+    u32 anchored_literal_fatbit_size; /**< size of each anch fatbit in bytes */
     struct fatbit *handled_roles; /**< fatbit of ROLES (not states) already
                                    * handled by this literal */
     u64a *som_store; /**< array of som locations */
@@ -171,11 +203,14 @@ struct ALIGN_CL_DIRECTIVE hs_scratch {
                             * location had been writable */
     u64a som_set_now_offset; /**< offset at which som_set_now represents */
     u32 som_store_count;
-    u32 handledKeyCount;
-    u32 delay_count;
+    u32 som_fatbit_size; /**< size of som location fatbit structures in bytes */
+    u32 handledKeyFatbitSize; /**< size of handled_keys fatbit in bytes */
+    u32 delay_fatbit_size; /**< size of each delay fatbit in bytes */
     u32 scratchSize;
     char *scratch_alloc; /* user allocated scratch object */
-    u8 ALIGN_DIRECTIVE fdr_temp_buf[FDR_TEMP_BUF_SIZE];
+    u64a *fdr_conf; /**< FDR confirm value */
+    u8 fdr_conf_offset; /**< offset where FDR/Teddy front end matches
+                         * in buffer */
 };
 
 /* array of fatbit ptr; TODO: why not an array of fatbits? */
@@ -196,7 +231,13 @@ char told_to_stop_matching(const struct hs_scratch *scratch) {
 
 static really_inline
 char can_stop_matching(const struct hs_scratch *scratch) {
-    return scratch->core_info.status & (STATUS_TERMINATED | STATUS_EXHAUSTED);
+    return scratch->core_info.status &
+           (STATUS_TERMINATED | STATUS_EXHAUSTED | STATUS_ERROR);
+}
+
+static really_inline
+char internal_matching_error(const struct hs_scratch *scratch) {
+    return scratch->core_info.status & STATUS_ERROR;
 }
 
 /**

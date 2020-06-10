@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -46,11 +46,17 @@ void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch);
 void roseStreamEodExec(const struct RoseEngine *t, u64a offset,
                        struct hs_scratch *scratch);
 
-hwlmcb_rv_t roseCallback(size_t start, size_t end, u32 id, void *context);
+hwlmcb_rv_t roseCallback(size_t end, u32 id, struct hs_scratch *scratch);
 
 int roseReportAdaptor(u64a start, u64a end, ReportID id, void *context);
 
 int roseRunBoundaryProgram(const struct RoseEngine *rose, u32 program,
                            u64a stream_offset, struct hs_scratch *scratch);
+
+int roseRunFlushCombProgram(const struct RoseEngine *rose,
+                            struct hs_scratch *scratch, u64a end);
+
+int roseRunLastFlushCombProgram(const struct RoseEngine *rose,
+                                struct hs_scratch *scratch, u64a end);
 
 #endif // ROSE_H

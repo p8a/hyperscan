@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -31,16 +31,14 @@
 
 #include "grey.h"
 #include "compiler/compiler.h"
-#include "nfa/limex_context.h"
 #include "nfa/limex_internal.h"
 #include "nfa/nfa_api.h"
 #include "nfa/nfa_api_util.h"
 #include "nfa/nfa_internal.h"
 #include "nfagraph/ng.h"
 #include "nfagraph/ng_limex.h"
-#include "nfagraph/ng_restructuring.h"
 #include "nfagraph/ng_util.h"
-#include "util/alloc.h"
+#include "util/bytecode_ptr.h"
 #include "util/target_info.h"
 
 using namespace std;
@@ -75,7 +73,8 @@ protected:
         CompileContext cc(false, false, target, Grey());
         ReportManager rm(cc.grey);
         ParsedExpression parsed(0, expr.c_str(), flags, 0);
-        unique_ptr<NGWrapper> g = buildWrapper(rm, cc, parsed);
+        auto built_expr = buildGraph(rm, cc, parsed);
+        const auto &g = built_expr.g;
         ASSERT_TRUE(g != nullptr);
         clearReports(*g);
 
@@ -89,8 +88,8 @@ protected:
                            type, cc);
         ASSERT_TRUE(nfa != nullptr);
 
-        full_state = aligned_zmalloc_unique<char>(nfa->scratchStateSize);
-        stream_state = aligned_zmalloc_unique<char>(nfa->streamStateSize);
+        full_state = make_bytecode_ptr<char>(nfa->scratchStateSize, 64);
+        stream_state = make_bytecode_ptr<char>(nfa->streamStateSize);
     }
 
     virtual void initQueue() {
@@ -117,13 +116,13 @@ protected:
     unsigned matches;
 
     // Compiled NFA structure.
-    aligned_unique_ptr<NFA> nfa;
+    bytecode_ptr<NFA> nfa;
 
     // Space for full state.
-    aligned_unique_ptr<char> full_state;
+    bytecode_ptr<char> full_state;
 
     // Space for stream state.
-    aligned_unique_ptr<char> stream_state;
+    bytecode_ptr<char> stream_state;
 
     // Queue structure.
     struct mq q;
@@ -167,11 +166,10 @@ TEST_P(LimExModelTest, QueueExec) {
 TEST_P(LimExModelTest, CompressExpand) {
     ASSERT_TRUE(nfa != nullptr);
 
-    // 64-bit NFAs assume during compression that they have >= 5 bytes of
-    // compressed NFA state, which isn't true for our 8-state test pattern. We
-    // skip this test for just these models.
-    if (nfa->scratchStateSize == 8) {
-        return;
+    u32 real_state_size = nfa->scratchStateSize;
+    /* Only look at 8 bytes for limex 64 (rather than the padding) */
+    if (nfa->type == LIMEX_NFA_64) {
+        real_state_size = sizeof(u64a);
     }
 
     initQueue();
@@ -189,14 +187,12 @@ TEST_P(LimExModelTest, CompressExpand) {
 
     // Expand state into a new copy and check that it matches the original
     // uncompressed state.
-    aligned_unique_ptr<char> state_copy =
-        aligned_zmalloc_unique<char>(nfa->scratchStateSize);
+    auto state_copy = make_bytecode_ptr<char>(nfa->scratchStateSize, 64);
     char *dest = state_copy.get();
     memset(dest, 0xff, nfa->scratchStateSize);
     nfaExpandState(nfa.get(), dest, q.streamState, q.offset,
                    queue_prev_byte(&q, end));
-    ASSERT_TRUE(std::equal(dest, dest + nfa->scratchStateSize,
-                           full_state.get()));
+    ASSERT_TRUE(std::equal(dest, dest + real_state_size, full_state.get()));
 }
 
 TEST_P(LimExModelTest, InitCompressedState0) {
@@ -310,7 +306,8 @@ protected:
         CompileContext cc(false, false, get_current_target(), Grey());
         ReportManager rm(cc.grey);
         ParsedExpression parsed(0, expr.c_str(), flags, 0);
-        unique_ptr<NGWrapper> g = buildWrapper(rm, cc, parsed);
+        auto built_expr = buildGraph(rm, cc, parsed);
+        const auto &g = built_expr.g;
         ASSERT_TRUE(g != nullptr);
         clearReports(*g);
 
@@ -333,7 +330,7 @@ protected:
     unsigned matches;
 
     // Compiled NFA structure.
-    aligned_unique_ptr<NFA> nfa;
+    bytecode_ptr<NFA> nfa;
 };
 
 INSTANTIATE_TEST_CASE_P(LimExReverse, LimExReverseTest,
@@ -369,7 +366,8 @@ protected:
         CompileContext cc(true, false, get_current_target(), Grey());
         ParsedExpression parsed(0, expr.c_str(), flags, 0);
         ReportManager rm(cc.grey);
-        unique_ptr<NGWrapper> g = buildWrapper(rm, cc, parsed);
+        auto built_expr = buildGraph(rm, cc, parsed);
+        const auto &g = built_expr.g;
         ASSERT_TRUE(g != nullptr);
         clearReports(*g);
 
@@ -383,8 +381,8 @@ protected:
                            type, cc);
         ASSERT_TRUE(nfa != nullptr);
 
-        full_state = aligned_zmalloc_unique<char>(nfa->scratchStateSize);
-        stream_state = aligned_zmalloc_unique<char>(nfa->streamStateSize);
+        full_state = make_bytecode_ptr<char>(nfa->scratchStateSize, 64);
+        stream_state = make_bytecode_ptr<char>(nfa->streamStateSize);
     }
 
     virtual void initQueue() {
@@ -411,13 +409,13 @@ protected:
     unsigned matches;
 
     // Compiled NFA structure.
-    aligned_unique_ptr<NFA> nfa;
+    bytecode_ptr<NFA> nfa;
 
     // Space for full state.
-    aligned_unique_ptr<char> full_state;
+    bytecode_ptr<char> full_state;
 
     // Space for stream state.
-    aligned_unique_ptr<char> stream_state;
+    bytecode_ptr<char> stream_state;
 
     // Queue structure.
     struct mq q;

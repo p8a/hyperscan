@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -34,7 +34,6 @@
 #include "container.h"
 #include "graph_range.h"
 #include "make_unique.h"
-#include "ue2_containers.h"
 
 #include <map>
 #include <set>
@@ -103,7 +102,7 @@ bool graph_empty(const Graph &g) {
 }
 
 vector<vector<u32>> removeClique(CliqueGraph &cg) {
-    DEBUG_PRINTF("graph size:%lu\n", num_vertices(cg));
+    DEBUG_PRINTF("graph size:%zu\n", num_vertices(cg));
     vector<vector<u32>> cliquesVec = {findCliqueGroup(cg)};
     while (!graph_empty(cg)) {
         const vector<u32> &c = cliquesVec.back();

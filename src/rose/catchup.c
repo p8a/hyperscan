@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -51,13 +51,12 @@ static really_inline
 int roseNfaRunProgram(const struct RoseEngine *rose, struct hs_scratch *scratch,
                       u64a som, u64a offset, ReportID id, const char from_mpv) {
     const u32 program = id;
-    const size_t match_len = 0; // Unused in this path.
     u8 flags = ROSE_PROG_FLAG_IN_CATCHUP;
     if (from_mpv) {
         flags |= ROSE_PROG_FLAG_FROM_MPV;
     }
 
-    roseRunProgram(rose, scratch, program, som, offset, match_len, flags);
+    roseRunProgram(rose, scratch, program, som, offset, flags);
 
     return can_stop_matching(scratch) ? MO_HALT_MATCHING : MO_CONTINUE_MATCHING;
 }
@@ -401,7 +400,7 @@ hwlmcb_rv_t roseCatchUpMPV_i(const struct RoseEngine *t, s64a loc,
     scratch->tctxt.mpv_inactive = 0;
 
     /* we know it is going to be an mpv, skip the indirection */
-    next_pos_match_loc = nfaExecMpv0_QueueExecRaw(q->nfa, q, loc);
+    next_pos_match_loc = nfaExecMpv_QueueExecRaw(q->nfa, q, loc);
     assert(!q->report_current);
 
     if (!next_pos_match_loc) { /* 0 means dead */
@@ -425,6 +424,12 @@ hwlmcb_rv_t roseCatchUpMPV_i(const struct RoseEngine *t, s64a loc,
     }
 
 done:
+    if (t->flushCombProgramOffset) {
+        if (roseRunFlushCombProgram(t, scratch, mpv_exec_end)
+                == HWLM_TERMINATE_MATCHING) {
+            return HWLM_TERMINATE_MATCHING;
+        }
+    }
     updateMinMatchOffsetFromMpv(&scratch->tctxt, mpv_exec_end);
     scratch->tctxt.next_mpv_offset
         = MAX(next_pos_match_loc + scratch->core_info.buf_offset,
@@ -441,7 +446,7 @@ char in_mpv(const struct RoseEngine *rose, const struct hs_scratch *scratch) {
     const struct RoseContext *tctxt = &scratch->tctxt;
     assert(tctxt->curr_qi < rose->queueCount);
     if (tctxt->curr_qi < rose->outfixBeginQueue) {
-        assert(getNfaByQueue(rose, tctxt->curr_qi)->type == MPV_NFA_0);
+        assert(getNfaByQueue(rose, tctxt->curr_qi)->type == MPV_NFA);
         return 1;
     }
     return 0;

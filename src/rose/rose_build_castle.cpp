@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -38,7 +38,6 @@
 #include "util/container.h"
 #include "util/dump_charclass.h"
 #include "util/graph_range.h"
-#include "util/ue2_containers.h"
 #include "util/ue2string.h"
 
 #include <map>
@@ -55,7 +54,7 @@ namespace ue2 {
 
 static
 void makeCastle(LeftEngInfo &left,
-               unordered_map<const NGHolder *, shared_ptr<CastleProto>> &cache) {
+            unordered_map<const NGHolder *, shared_ptr<CastleProto>> &cache) {
     if (left.dfa || left.haig || left.castle) {
         return;
     }
@@ -85,7 +84,7 @@ void makeCastle(LeftEngInfo &left,
 
 static
 void makeCastleSuffix(RoseBuildImpl &tbi, RoseVertex v,
-        ue2::unordered_map<const NGHolder *, shared_ptr<CastleProto> > &cache) {
+            unordered_map<const NGHolder *, shared_ptr<CastleProto>> &cache) {
     RoseSuffixInfo &suffix = tbi.g[v].suffix;
     if (!suffix.graph) {
         return;
@@ -131,7 +130,7 @@ vector<rose_literal_id> literals_for_vertex(const RoseBuildImpl &tbi,
     vector<rose_literal_id> rv;
 
     for (const u32 id : tbi.g[v].literals) {
-        rv.push_back(tbi.literals.right.at(id));
+        rv.push_back(tbi.literals.at(id));
     }
 
     return rv;
@@ -163,7 +162,7 @@ void renovateCastle(RoseBuildImpl &tbi, CastleProto *castle,
 
     for (RoseVertex v : verts) {
         assert(g[v].left.castle.get() == castle);
-        DEBUG_PRINTF("%zu checks at lag %u\n", g[v].idx, g[v].left.lag);
+        DEBUG_PRINTF("%zu checks at lag %u\n", g[v].index, g[v].left.lag);
         vector<rose_literal_id> lits = literals_for_vertex(tbi, v);
         for (const auto &e : lits) {
             DEBUG_PRINTF("%s +%u\n", dumpString(e.s).c_str(), e.delay);
@@ -298,8 +297,8 @@ bool unmakeCastles(RoseBuildImpl &tbi) {
 }
 
 void remapCastleTops(RoseBuildImpl &tbi) {
-    ue2::unordered_map<CastleProto *, vector<RoseVertex> > rose_castles;
-    ue2::unordered_map<CastleProto *, vector<RoseVertex> > suffix_castles;
+    unordered_map<CastleProto *, vector<RoseVertex>> rose_castles;
+    unordered_map<CastleProto *, vector<RoseVertex>> suffix_castles;
 
     RoseGraph &g = tbi.g;
     for (auto v : vertices_range(g)) {
@@ -366,7 +365,7 @@ bool triggerKillsRoseCastle(const RoseBuildImpl &tbi, const left_id &left,
     /* check each pred literal to see if they all kill previous castle
      * state */
     for (u32 lit_id : tbi.g[source(e, tbi.g)].literals) {
-        const rose_literal_id &pred_lit = tbi.literals.right.at(lit_id);
+        const rose_literal_id &pred_lit = tbi.literals.at(lit_id);
         const ue2_literal s = findNonOverlappingTail(all_lits, pred_lit.s);
         const CharReach &cr = c.reach();
 

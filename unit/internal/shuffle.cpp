@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,6 +30,7 @@
 
 #include "gtest/gtest.h"
 
+#include "util/arch.h"
 #include "util/simd_utils.h"
 #include "nfa/limex_shuffle.h"
 
@@ -54,14 +55,14 @@ TEST(Shuffle, PackedExtract32_1) {
     for (unsigned int i = 0; i < 32; i++) {
         // shuffle a single 1 bit to the front
         u32 mask = 1U << i;
-        EXPECT_EQ(1U, packedExtract32(mask, mask));
-        EXPECT_EQ(1U, packedExtract32(~0U, mask));
+        EXPECT_EQ(1U, pext32(mask, mask));
+        EXPECT_EQ(1U, pext32(~0U, mask));
         // we should get zero out of these cases
-        EXPECT_EQ(0U, packedExtract32(0, mask));
-        EXPECT_EQ(0U, packedExtract32(~mask, mask));
+        EXPECT_EQ(0U, pext32(0, mask));
+        EXPECT_EQ(0U, pext32(~mask, mask));
         // we should get zero out of all the other bit positions
         for (unsigned int j = 0; (j != i && j < 32); j++) {
-            EXPECT_EQ(0U, packedExtract32((1U << j), mask));
+            EXPECT_EQ(0U, pext32((1U << j), mask));
         }
     }
 }
@@ -69,10 +70,10 @@ TEST(Shuffle, PackedExtract32_1) {
 TEST(Shuffle, PackedExtract32_2) {
     // All 32 bits in mask are on
     u32 mask = ~0U;
-    EXPECT_EQ(0U, packedExtract32(0, mask));
-    EXPECT_EQ(mask, packedExtract32(mask, mask));
+    EXPECT_EQ(0U, pext32(0, mask));
+    EXPECT_EQ(mask, pext32(mask, mask));
     for (unsigned int i = 0; i < 32; i++) {
-        EXPECT_EQ(1U << i, packedExtract32(1U << i, mask));
+        EXPECT_EQ(1U << i, pext32(1U << i, mask));
     }
 }
 
@@ -84,16 +85,16 @@ TEST(Shuffle, PackedExtract32_3) {
     }
 
     // Test both cases (all even bits, all odd bits)
-    EXPECT_EQ((1U << 16) - 1, packedExtract32(mask, mask));
-    EXPECT_EQ((1U << 16) - 1, packedExtract32(~mask, ~mask));
-    EXPECT_EQ(0U, packedExtract32(~mask, mask));
-    EXPECT_EQ(0U, packedExtract32(mask, ~mask));
+    EXPECT_EQ((1U << 16) - 1, pext32(mask, mask));
+    EXPECT_EQ((1U << 16) - 1, pext32(~mask, ~mask));
+    EXPECT_EQ(0U, pext32(~mask, mask));
+    EXPECT_EQ(0U, pext32(mask, ~mask));
 
     for (unsigned int i = 0; i < 32; i += 2) {
-        EXPECT_EQ(1U << (i/2), packedExtract32(1U << i, mask));
-        EXPECT_EQ(0U, packedExtract32(1U << i, ~mask));
-        EXPECT_EQ(1U << (i/2), packedExtract32(1U << (i+1), ~mask));
-        EXPECT_EQ(0U, packedExtract32(1U << (i+1), mask));
+        EXPECT_EQ(1U << (i/2), pext32(1U << i, mask));
+        EXPECT_EQ(0U, pext32(1U << i, ~mask));
+        EXPECT_EQ(1U << (i/2), pext32(1U << (i+1), ~mask));
+        EXPECT_EQ(0U, pext32(1U << (i+1), mask));
     }
 }
 
@@ -102,14 +103,14 @@ TEST(Shuffle, PackedExtract64_1) {
     for (unsigned int i = 0; i < 64; i++) {
         // shuffle a single 1 bit to the front
         u64a mask = 1ULL << i;
-        EXPECT_EQ(1U, packedExtract64(mask, mask));
-        EXPECT_EQ(1U, packedExtract64(~0ULL, mask));
+        EXPECT_EQ(1U, pext64(mask, mask));
+        EXPECT_EQ(1U, pext64(~0ULL, mask));
         // we should get zero out of these cases
-        EXPECT_EQ(0U, packedExtract64(0, mask));
-        EXPECT_EQ(0U, packedExtract64(~mask, mask));
+        EXPECT_EQ(0U, pext64(0, mask));
+        EXPECT_EQ(0U, pext64(~mask, mask));
         // we should get zero out of all the other bit positions
         for (unsigned int j = 0; (j != i && j < 64); j++) {
-            EXPECT_EQ(0U, packedExtract64((1ULL << j), mask));
+            EXPECT_EQ(0U, pext64((1ULL << j), mask));
         }
     }
 }
@@ -117,26 +118,26 @@ TEST(Shuffle, PackedExtract64_1) {
 TEST(Shuffle, PackedExtract64_2) {
     // Fill first half of mask
     u64a mask = 0x00000000ffffffffULL;
-    EXPECT_EQ(0U, packedExtract64(0, mask));
-    EXPECT_EQ(0xffffffffU, packedExtract64(mask, mask));
+    EXPECT_EQ(0U, pext64(0, mask));
+    EXPECT_EQ(0xffffffffU, pext64(mask, mask));
     for (unsigned int i = 0; i < 32; i++) {
-        EXPECT_EQ(1U << i, packedExtract64(1ULL << i, mask));
+        EXPECT_EQ(1U << i, pext64(1ULL << i, mask));
     }
 
     // Fill second half of mask
     mask = 0xffffffff00000000ULL;
-    EXPECT_EQ(0U, packedExtract64(0, mask));
-    EXPECT_EQ(0xffffffffU, packedExtract64(mask, mask));
+    EXPECT_EQ(0U, pext64(0, mask));
+    EXPECT_EQ(0xffffffffU, pext64(mask, mask));
     for (unsigned int i = 32; i < 64; i++) {
-        EXPECT_EQ(1U << (i - 32), packedExtract64(1ULL << i, mask));
+        EXPECT_EQ(1U << (i - 32), pext64(1ULL << i, mask));
     }
 
     // Try one in the middle
     mask = 0x0000ffffffff0000ULL;
-    EXPECT_EQ(0U, packedExtract64(0, mask));
-    EXPECT_EQ(0xffffffffU, packedExtract64(mask, mask));
+    EXPECT_EQ(0U, pext64(0, mask));
+    EXPECT_EQ(0xffffffffU, pext64(mask, mask));
     for (unsigned int i = 16; i < 48; i++) {
-        EXPECT_EQ(1U << (i - 16), packedExtract64(1ULL << i, mask));
+        EXPECT_EQ(1U << (i - 16), pext64(1ULL << i, mask));
     }
 }
 
@@ -148,30 +149,31 @@ TEST(Shuffle, PackedExtract64_3) {
     }
 
     // Test both cases (all even bits, all odd bits)
-    EXPECT_EQ(0xffffffffU, packedExtract64(mask, mask));
-    EXPECT_EQ(0xffffffffU, packedExtract64(~mask, ~mask));
-    EXPECT_EQ(0U, packedExtract64(~mask, mask));
-    EXPECT_EQ(0U, packedExtract64(mask, ~mask));
+    EXPECT_EQ(0xffffffffU, pext64(mask, mask));
+    EXPECT_EQ(0xffffffffU, pext64(~mask, ~mask));
+    EXPECT_EQ(0U, pext64(~mask, mask));
+    EXPECT_EQ(0U, pext64(mask, ~mask));
 
     for (unsigned int i = 0; i < 64; i += 2) {
-        EXPECT_EQ(1U << (i/2), packedExtract64(1ULL << i, mask));
-        EXPECT_EQ(0U, packedExtract64(1ULL << i, ~mask));
-        EXPECT_EQ(1U << (i/2), packedExtract64(1ULL << (i+1), ~mask));
-        EXPECT_EQ(0U, packedExtract64(1ULL << (i+1), mask));
+        EXPECT_EQ(1U << (i/2), pext64(1ULL << i, mask));
+        EXPECT_EQ(0U, pext64(1ULL << i, ~mask));
+        EXPECT_EQ(1U << (i/2), pext64(1ULL << (i+1), ~mask));
+        EXPECT_EQ(0U, pext64(1ULL << (i+1), mask));
     }
 }
 
 template<typename T>
 static
 void build_pshufb_masks_onebit(unsigned int bit, T *permute, T *compare) {
-    static_assert(sizeof(T) == sizeof(m128) || sizeof(T) == sizeof(m256),
+    static_assert(sizeof(T) == sizeof(m128) || sizeof(T) == sizeof(m256) ||
+                      sizeof(T) == sizeof(m512),
                   "should be valid type");
     // permute mask has 0x80 in all bytes except the one we care about
     memset(permute, 0x80, sizeof(*permute));
     memset(compare, 0, sizeof(*compare));
     char *pmsk = (char *)permute;
     char *cmsk = (char *)compare;
-    u8 off = (bit >= 128) ? 0x10 : 0;
+    u8 off = (bit >= 128) ? (bit >= 256) ? (bit >= 384) ? 0x30 : 0x20 : 0x10 : 0;
     pmsk[off] = bit/8;
     cmsk[off] = ~(1 << (bit % 8));
 }
@@ -194,7 +196,7 @@ TEST(Shuffle, PackedExtract128_1) {
     }
 }
 
-#if defined(__AVX2__)
+#if defined(HAVE_AVX2)
 TEST(Shuffle, PackedExtract256_1) {
     // Try all possible one-bit masks
     for (unsigned int i = 0; i < 256; i++) {
@@ -209,6 +211,26 @@ TEST(Shuffle, PackedExtract256_1) {
         // we should get zero out of all the other bit positions
         for (unsigned int j = 0; (j != i && j < 256); j++) {
             EXPECT_EQ(0U, packedExtract256(setbit<m256>(j), permute, compare));
+        }
+    }
+}
+#endif
+
+#if defined(HAVE_AVX512)
+TEST(Shuffle, PackedExtract512_1) {
+    // Try all possible one-bit masks
+    for (unsigned int i = 0; i < 512; i++) {
+        // shuffle a single 1 bit to the front
+        m512 permute, compare;
+        build_pshufb_masks_onebit(i, &permute, &compare);
+        EXPECT_EQ(1U, packedExtract512(setbit<m512>(i), permute, compare));
+        EXPECT_EQ(1U, packedExtract512(ones512(), permute, compare));
+        // we should get zero out of these cases
+        EXPECT_EQ(0U, packedExtract512(zeroes512(), permute, compare));
+        EXPECT_EQ(0U, packedExtract512(not512(setbit<m512>(i)), permute, compare));
+        // we should get zero out of all the other bit positions
+        for (unsigned int j = 0; (j != i && j < 512); j++) {
+            EXPECT_EQ(0U, packedExtract512(setbit<m512>(j), permute, compare));
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Intel Corporation
+ * Copyright (c) 2016-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -32,7 +32,7 @@
 
 #include "simd_utils.h"
 
-const char vbs_mask_data[] ALIGN_CL_DIRECTIVE = {
+ALIGN_CL_DIRECTIVE const char vbs_mask_data[] = {
     0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0,
     0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0, 0xf0,
 
@@ -48,7 +48,8 @@ const char vbs_mask_data[] ALIGN_CL_DIRECTIVE = {
 #define ZEROES_32 ZEROES_8, ZEROES_8, ZEROES_8, ZEROES_8
 
 /** \brief LUT for the mask1bit functions. */
-const u8 simd_onebit_masks[] ALIGN_CL_DIRECTIVE = {
+ALIGN_CL_DIRECTIVE const u8 simd_onebit_masks[] = {
+    ZEROES_32, ZEROES_32,
     ZEROES_31, 0x01, ZEROES_32,
     ZEROES_31, 0x02, ZEROES_32,
     ZEROES_31, 0x04, ZEROES_32,
@@ -57,4 +58,5 @@ const u8 simd_onebit_masks[] ALIGN_CL_DIRECTIVE = {
     ZEROES_31, 0x20, ZEROES_32,
     ZEROES_31, 0x40, ZEROES_32,
     ZEROES_31, 0x80, ZEROES_32,
+    ZEROES_32, ZEROES_32,
 };

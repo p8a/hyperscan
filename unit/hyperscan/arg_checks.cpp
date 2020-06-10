@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -84,6 +84,12 @@ void breakDatabaseBytecode(hs_database *db) {
     *bytecode += 3;
 }
 
+// Check that hs_valid_platform says we can run here
+TEST(HyperscanArgChecks, ValidPlatform) {
+    hs_error_t error = hs_valid_platform();
+    ASSERT_EQ(HS_SUCCESS, error) << "hs_valid_platform should return zero";
+}
+
 // Check that hs_version gives us a reasonable string back
 TEST(HyperscanArgChecks, Version) {
     const char *version = hs_version();
@@ -165,7 +171,9 @@ TEST(HyperscanArgChecks, SingleCompileBogusFlags) {
                                 nullptr, &db, &compile_err);
     EXPECT_EQ(HS_COMPILER_ERROR, err);
     EXPECT_TRUE(compile_err != nullptr);
-    EXPECT_STREQ("Unrecognised flag.", compile_err->message);
+    EXPECT_STREQ("only HS_FLAG_QUIET and HS_FLAG_SINGLEMATCH "
+                 "are supported in combination "
+                 "with HS_FLAG_COMBINATION.", compile_err->message);
 
     hs_free_compile_error(compile_err);
 }
@@ -1362,6 +1370,7 @@ TEST(HyperscanArgChecks, AllocScratchBogusScratch) {
     ASSERT_EQ(HS_SUCCESS, err);
     ASSERT_TRUE(db != nullptr);
     hs_scratch_t *blah = (hs_scratch_t *)malloc(100);
+    ASSERT_TRUE(blah != nullptr);
     memset(blah, 0xf0, 100);
     err = hs_alloc_scratch(db, &blah);
     ASSERT_EQ(HS_INVALID, err);
@@ -2026,6 +2035,7 @@ TEST(HyperscanArgChecks, ScratchSizeBadScratch) {
 TEST(HyperscanArgChecks, CloneBadScratch) {
     // Try cloning the scratch
     void *local_garbage = malloc(sizeof(garbage));
+    ASSERT_TRUE(local_garbage != nullptr);
     memcpy(local_garbage, garbage, sizeof(garbage));
     hs_scratch_t *cloned = nullptr;
     hs_scratch_t *scratch = (hs_scratch_t *)local_garbage;
@@ -2044,6 +2054,7 @@ TEST(HyperscanArgChecks, ScanBadScratch) {
     ASSERT_TRUE(db != nullptr);
 
     void *local_garbage = malloc(sizeof(garbage));
+    ASSERT_TRUE(local_garbage != nullptr);
     memcpy(local_garbage, garbage, sizeof(garbage));
 
     hs_scratch_t *scratch = (hs_scratch_t *)local_garbage;
@@ -2064,6 +2075,7 @@ TEST(HyperscanArgChecks, ScanStreamBadScratch) {
     ASSERT_EQ(HS_SUCCESS, err);
     ASSERT_TRUE(db != nullptr);
     void *local_garbage = malloc(sizeof(garbage));
+    ASSERT_TRUE(local_garbage != nullptr);
     memcpy(local_garbage, garbage, sizeof(garbage));
     hs_scratch_t *scratch = (hs_scratch_t *)local_garbage;
 
@@ -2099,6 +2111,7 @@ TEST(HyperscanArgChecks, ResetStreamBadScratch) {
     ASSERT_EQ(HS_SUCCESS, err);
     ASSERT_TRUE(db != nullptr);
     void *local_garbage = malloc(sizeof(garbage));
+    ASSERT_TRUE(local_garbage != nullptr);
     memcpy(local_garbage, garbage, sizeof(garbage));
     hs_scratch_t *scratch = (hs_scratch_t *)local_garbage;
 
@@ -2134,6 +2147,7 @@ TEST(HyperscanArgChecks, ScanVectorBadScratch) {
     ASSERT_EQ(HS_SUCCESS, err);
     ASSERT_TRUE(db != nullptr);
     void *local_garbage = malloc(sizeof(garbage));
+    ASSERT_TRUE(local_garbage != nullptr);
     memcpy(local_garbage, garbage, sizeof(garbage));
     hs_scratch_t *scratch = (hs_scratch_t *)local_garbage;
 
@@ -2310,6 +2324,289 @@ TEST(HyperscanArgChecks, multicompile_nomix_highlander_2) {
 TEST(HyperscanArgChecks, hs_populate_platform_null) {
     hs_error_t err = hs_populate_platform(nullptr);
     ASSERT_EQ(HS_INVALID, err);
+}
+
+TEST(HyperscanArgChecks, CompressStreamNoStream) {
+    char buf[100];
+    size_t used;
+    hs_error_t err = hs_compress_stream(nullptr, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_INVALID, err);
+}
+
+TEST(HyperscanArgChecks, CompressStreamNoUsed) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream;
+    hs_error_t err = hs_open_stream(db, 0, &stream);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[100];
+    err = hs_compress_stream(stream, buf, sizeof(buf), nullptr);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, CompressStreamNoBuf) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream;
+    hs_error_t err = hs_open_stream(db, 0, &stream);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[100];
+    size_t used;
+    err = hs_compress_stream(stream, nullptr, sizeof(buf), &used);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, CompressStreamSmallBuff) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream;
+    hs_error_t err = hs_open_stream(db, 0, &stream);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[100];
+    size_t used = 0;
+    err = hs_compress_stream(stream, buf, 1, &used);
+    ASSERT_EQ(HS_INSUFFICIENT_SPACE, err);
+    ASSERT_LT(0, used);
+
+    err = hs_close_stream(stream, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ExpandNoDb) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_expand_stream(nullptr, &stream2, buf, used);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ExpandNoTo) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_expand_stream(db, nullptr, buf, used);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ExpandNoBuf) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_expand_stream(db, &stream2, nullptr, used);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ExpandSmallBuf) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_expand_stream(db, &stream2, buf, used / 2);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ResetAndExpandNoStream) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_reset_and_expand_stream(nullptr, buf, used, nullptr, nullptr,
+                                     nullptr);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ResetAndExpandNoBuf) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_open_stream(db, 0, &stream2);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_reset_and_expand_stream(stream2, nullptr, used, nullptr, nullptr,
+                                     nullptr);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_close_stream(stream2, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+
+TEST(HyperscanArgChecks, ResetAndExpandSmallBuf) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_open_stream(db, 0, &stream2);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_reset_and_expand_stream(stream2, buf, used / 2, nullptr, nullptr,
+                                     nullptr);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_close_stream(stream2, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
+}
+
+TEST(HyperscanArgChecks, ResetAndExpandNoScratch) {
+    hs_database_t *db = buildDB("(foo.*bar){3,}", 0, 0, HS_MODE_STREAM);
+    ASSERT_NE(nullptr, db);
+
+    hs_stream_t *stream1;
+    hs_error_t err = hs_open_stream(db, 0, &stream1);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    char buf[2000];
+    size_t used = 0;
+    err = hs_compress_stream(stream1, buf, sizeof(buf), &used);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    hs_stream_t *stream2;
+    err = hs_open_stream(db, 0, &stream2);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    int temp;
+
+    err = hs_reset_and_expand_stream(stream2, buf, used, nullptr, singleHandler,
+                                     &temp);
+    ASSERT_EQ(HS_INVALID, err);
+
+    err = hs_close_stream(stream1, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_close_stream(stream2, nullptr, nullptr, nullptr);
+    ASSERT_EQ(HS_SUCCESS, err);
+
+    err = hs_free_database(db);
+    ASSERT_EQ(HS_SUCCESS, err);
 }
 
 class BadModeTest : public testing::TestWithParam<unsigned> {};

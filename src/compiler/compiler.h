@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Intel Corporation
+ * Copyright (c) 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -35,11 +35,12 @@
 
 #include "ue2common.h"
 #include "database.h"
+#include "compiler/expression_info.h"
 #include "parser/Component.h"
-#include "som/som.h"
+#include "util/noncopyable.h"
+#include "util/ue2string.h"
 
 #include <memory>
-#include <boost/core/noncopyable.hpp>
 
 struct hs_database;
 struct hs_expr_ext;
@@ -50,34 +51,48 @@ struct CompileContext;
 struct Grey;
 struct target_t;
 class NG;
+class NGHolder;
 class ReportManager;
-class NGWrapper;
 
-/** Class gathering together the pieces of a parsed expression.
- * Note: Owns the provided component.
- */
-class ParsedExpression : boost::noncopyable {
+/** \brief Class gathering together the pieces of a parsed expression. */
+class ParsedExpression : noncopyable {
 public:
     ParsedExpression(unsigned index, const char *expression, unsigned flags,
-                     ReportID actionId, const hs_expr_ext *ext = nullptr);
+                     ReportID report, const hs_expr_ext *ext = nullptr);
 
-    bool utf8; //!< UTF-8 mode flag specified
+    /** \brief Expression information (from flags, extparam etc) */
+    ExpressionInfo expr;
 
-    /** \brief root node of parsed component tree. */
-    std::unique_ptr<ue2::Component> component;
+    /** \brief Root node of parsed component tree. */
+    std::unique_ptr<Component> component;
+};
 
-    const bool allow_vacuous;   //!< HS_FLAG_ALLOWEMPTY specified
-    const bool highlander;      //!< HS_FLAG_SINGLEMATCH specified
-    const bool prefilter;       //!< HS_FLAG_PREFILTER specified
-    som_type som;               //!< chosen SOM mode, or SOM_NONE
 
-    /** \brief index in expressions array passed to \ref hs_compile_multi */
-    const unsigned index;
+/** \brief Class gathering together the pieces of a parsed lit-expression. */
+class ParsedLitExpression : noncopyable {
+public:
+    ParsedLitExpression(unsigned index, const char *expression,
+                        size_t expLength, unsigned flags, ReportID report);
 
-    const ReportID id; //!< user-specified pattern ID
-    u64a min_offset;   //!< 0 if not used
-    u64a max_offset;   //!< MAX_OFFSET if not used
-    u64a min_length;   //!< 0 if not used
+    void parseLiteral(const char *expression, size_t len, bool nocase);
+
+    /** \brief Expression information (from flags, extparam etc) */
+    ExpressionInfo expr;
+
+    /** \brief Format the lit-expression text into Hyperscan literal type. */
+    ue2_literal lit;
+};
+
+/**
+ * \brief Class gathering together the pieces of an expression that has been
+ * built into an NFA graph.
+ */
+struct BuiltExpression {
+    /** \brief Expression information (from flags, extparam etc) */
+    ExpressionInfo expr;
+
+    /** \brief Built Glushkov NFA graph. */
+    std::unique_ptr<NGHolder> g;
 };
 
 /**
@@ -94,12 +109,16 @@ public:
  * @param ext
  *      Struct containing extra parameters for this expression, or NULL if
  *      none.
- * @param actionId
+ * @param report
  *      The identifier to associate with the expression; returned by engine on
  *      match.
  */
 void addExpression(NG &ng, unsigned index, const char *expression,
-                   unsigned flags, const hs_expr_ext *ext, ReportID actionId);
+                   unsigned flags, const hs_expr_ext *ext, ReportID report);
+
+void addLitExpression(NG &ng, unsigned index, const char *expression,
+                      unsigned flags, const hs_expr_ext *ext, ReportID id,
+                      size_t expLength);
 
 /**
  * Build a Hyperscan database out of the expressions we've been given. A
@@ -109,11 +128,13 @@ void addExpression(NG &ng, unsigned index, const char *expression,
  *      The global NG object.
  * @param[out] length
  *      The number of bytes occupied by the compiled structure.
+ * @param pureFlag
+ *      The flag indicating invocation from literal API or not.
  * @return
  *      The compiled structure. Should be deallocated with the
  *      hs_database_free() function.
  */
-struct hs_database *build(NG &ng, unsigned int *length);
+struct hs_database *build(NG &ng, unsigned int *length, u8 pureFlag);
 
 /**
  * Constructs an NFA graph from the given expression tree.
@@ -127,9 +148,8 @@ struct hs_database *build(NG &ng, unsigned int *length);
  * @return
  *      nullptr on error.
  */
-std::unique_ptr<NGWrapper> buildWrapper(ReportManager &rm,
-                                        const CompileContext &cc,
-                                        const ParsedExpression &expr);
+BuiltExpression buildGraph(ReportManager &rm, const CompileContext &cc,
+                           const ParsedExpression &expr);
 
 /**
  * Build a platform_t out of a target_t.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -36,18 +36,20 @@
 
 #include "ue2common.h"
 #include "util/compile_error.h"
+#include "util/noncopyable.h"
 #include "util/report.h"
+#include "parser/logical_combination.h"
 
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <vector>
-#include <boost/core/noncopyable.hpp>
 
 namespace ue2 {
 
 struct Grey;
 class RoseBuild;
-class NGWrapper;
+class ExpressionInfo;
 
 struct external_report_info {
     external_report_info(bool h, u32 fpi)
@@ -57,7 +59,7 @@ struct external_report_info {
 };
 
 /** \brief Tracks Report structures, exhaustion and dedupe keys. */
-class ReportManager : boost::noncopyable {
+class ReportManager : noncopyable {
 public:
     explicit ReportManager(const Grey &g);
 
@@ -79,6 +81,15 @@ public:
     /** \brief Total number of exhaustion keys. */
     u32 numEkeys() const;
 
+    /** \brief Total number of logical keys. */
+    u32 numLogicalKeys() const;
+
+    /** \brief Total number of logical operators. */
+    u32 numLogicalOps() const;
+
+    /** \brief Total number of combination keys. */
+    u32 numCkeys() const;
+
     /** \brief True if the pattern set can exhaust (i.e. all patterns are
      * highlander). */
     bool patternSetCanExhaust() const;
@@ -92,13 +103,13 @@ public:
     const std::vector<Report> &reports() const { return reportIds; }
 
     /**
-     * Get a simple internal report corresponding to the wrapper. An ekey will
-     * be setup as required.
+     * Get a simple internal report corresponding to the expression. An ekey
+     * will be setup if required.
      *
      * Note: this function may throw a CompileError if constraints on external
      * match id are violated (mixed highlander status for example).
      */
-    Report getBasicInternalReport(const NGWrapper &g, s32 adj = 0);
+    Report getBasicInternalReport(const ExpressionInfo &expr, s32 adj = 0);
 
     /** \brief Register an external report and validate that we are not
      * violating highlander constraints (which will cause an exception to be
@@ -108,6 +119,19 @@ public:
     /** \brief Fetch the ekey associated with the given expression index,
      * assigning one if necessary. */
     u32 getExhaustibleKey(u32 expressionIndex);
+
+    /** \brief Get lkey's corresponding ckeys. */
+    const std::set<u32> &getRelateCKeys(u32 lkey);
+
+    /** \brief Renumber lkey for logical operations, after parsed
+     * all logical expressions. */
+    void logicalKeyRenumber();
+
+    /** \brief Used in Rose for writing bytecode. */
+    const std::vector<LogicalOp> &getLogicalTree() const;
+
+    /** \brief Used in Rose for writing bytecode. */
+    const std::vector<CombInfo> &getCombInfoMap() const;
 
     /** \brief Fetch the dedupe key associated with the given report. Returns
      * ~0U if no dkey is needed. */
@@ -121,6 +145,9 @@ public:
      * set. */
     u32 getProgramOffset(ReportID id) const;
 
+    /** \brief Parsed logical combination structure. */
+    ParsedLogical pl;
+
 private:
     /** \brief Grey box ref, for checking resource limits. */
     const Grey &grey;
@@ -129,18 +156,18 @@ private:
     std::vector<Report> reportIds;
 
     /** \brief Mapping from Report to ID (inverse of \ref reportIds
-     * vector).  */
-    std::map<Report, size_t> reportIdToInternalMap;
+     * vector). */
+    std::unordered_map<Report, size_t> reportIdToInternalMap;
 
     /** \brief Mapping from ReportID to dedupe key. */
-    std::map<ReportID, u32> reportIdToDedupeKey;
+    std::unordered_map<ReportID, u32> reportIdToDedupeKey;
 
     /** \brief Mapping from ReportID to Rose program offset in bytecode. */
-    std::map<ReportID, u32> reportIdToProgramOffset;
+    std::unordered_map<ReportID, u32> reportIdToProgramOffset;
 
     /** \brief Mapping from external match ids to information about that
      * id. */
-    std::map<ReportID, external_report_info> externalIdMap;
+    std::unordered_map<ReportID, external_report_info> externalIdMap;
 
     /** \brief Mapping from expression index to exhaustion key. */
     std::map<s64a, u32> toExhaustibleKeyMap;

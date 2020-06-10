@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2018, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -33,6 +33,8 @@
 #include "miracle.h"
 #include "program_runtime.h"
 #include "rose.h"
+#include "rose_internal.h"
+#include "stream_long_lit.h"
 #include "hwlm/hwlm.h"
 #include "nfa/mcclellan.h"
 #include "nfa/nfa_api.h"
@@ -406,19 +408,22 @@ void ensureStreamNeatAndTidy(const struct RoseEngine *t, char *state,
     roseFlushLastByteHistory(t, scratch, offset + length);
     tctxt->lastEndOffset = offset + length;
     storeGroups(t, state, tctxt->groups);
+    storeLongLiteralState(t, state, scratch);
 }
 
 static really_inline
-void do_rebuild(const struct RoseEngine *t, const struct HWLM *ftable,
-                struct hs_scratch *scratch) {
+void do_rebuild(const struct RoseEngine *t, struct hs_scratch *scratch) {
+    assert(t->drmatcherOffset);
     assert(!can_stop_matching(scratch));
+
+    const struct HWLM *hwlm = getByOffset(t, t->drmatcherOffset);
     size_t len = MIN(scratch->core_info.hlen, t->delayRebuildLength);
     const u8 *buf = scratch->core_info.hbuf + scratch->core_info.hlen - len;
     DEBUG_PRINTF("BEGIN FLOATING REBUILD over %zu bytes\n", len);
 
     scratch->core_info.status &= ~STATUS_DELAY_DIRTY;
 
-    hwlmExec(ftable, buf, len, 0, roseDelayRebuildCallback, scratch,
+    hwlmExec(hwlm, buf, len, 0, roseDelayRebuildCallback, scratch,
              scratch->tctxt.groups);
     assert(!can_stop_matching(scratch));
 }
@@ -509,6 +514,34 @@ void runEagerPrefixesStream(const struct RoseEngine *t,
     }
 }
 
+static really_inline
+int can_never_match(const struct RoseEngine *t, char *state,
+                    struct hs_scratch *scratch, size_t length, u64a offset) {
+    struct RoseContext *tctxt = &scratch->tctxt;
+
+    if (tctxt->groups) {
+        DEBUG_PRINTF("still has active groups\n");
+        return 0;
+    }
+
+    if (offset + length <= t->anchoredDistance) { /* not < as may have eod */
+        DEBUG_PRINTF("still in anchored region\n");
+        return 0;
+    }
+
+    if (t->lastByteHistoryIterOffset) { /* last byte history is hard */
+        DEBUG_PRINTF("last byte history\n");
+        return 0;
+    }
+
+    if (mmbit_any(getActiveLeafArray(t, state), t->activeArrayCount)) {
+        DEBUG_PRINTF("active leaf\n");
+        return 0;
+    }
+
+    return 1;
+}
+
 void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch) {
     DEBUG_PRINTF("OH HAI [%llu, %llu)\n", scratch->core_info.buf_offset,
                  scratch->core_info.buf_offset + (u64a)scratch->core_info.len);
@@ -545,9 +578,11 @@ void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch) {
     tctxt->lastEndOffset = offset;
     tctxt->filledDelayedSlots = 0;
     tctxt->lastMatchOffset = 0;
+    tctxt->lastCombMatchOffset = offset;
     tctxt->minMatchOffset = offset;
     tctxt->minNonMpvMatchOffset = offset;
     tctxt->next_mpv_offset = 0;
+
     DEBUG_PRINTF("BEGIN: history len=%zu, buffer len=%zu groups=%016llx\n",
                  scratch->core_info.hlen, scratch->core_info.len, tctxt->groups);
 
@@ -576,6 +611,12 @@ void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch) {
 
     const struct HWLM *ftable = getFLiteralMatcher(t);
     if (ftable) {
+        // Load in long literal table state and set up "fake history" buffers
+        // (ll_buf, etc, used by the CHECK_LONG_LIT instruction). Note that this
+        // must be done here in order to ensure that it happens before any path
+        // that leads to storeLongLiteralState(), which relies on these buffers.
+        loadLongLiteralState(t, state, scratch);
+
         if (t->noFloatingRoots && !roseHasInFlightMatches(t, state, scratch)) {
             DEBUG_PRINTF("skip FLOATING: no inflight matches\n");
             goto flush_delay_and_exit;
@@ -597,15 +638,12 @@ void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch) {
                      rebuild, scratch->core_info.status,
                      t->maxFloatingDelayedMatch, offset);
 
-        if (!flen) {
-            if (rebuild) { /* rebuild floating delayed match stuff */
-                do_rebuild(t, ftable, scratch);
-            }
-            goto flush_delay_and_exit;
+        if (rebuild) { /* rebuild floating delayed match stuff */
+            do_rebuild(t, scratch);
         }
 
-        if (rebuild) { /* rebuild floating delayed match stuff */
-            do_rebuild(t, ftable, scratch);
+        if (!flen) {
+            goto flush_delay_and_exit;
         }
 
         if (flen + offset <= t->floatingMinDistance) {
@@ -621,17 +659,9 @@ void roseStreamExec(const struct RoseEngine *t, struct hs_scratch *scratch) {
         }
         DEBUG_PRINTF("start=%zu\n", start);
 
-        u8 *stream_state;
-        if (t->floatingStreamState) {
-            stream_state = getFloatingMatcherState(t, state);
-        } else {
-            stream_state = NULL;
-        }
-
         DEBUG_PRINTF("BEGIN FLOATING (over %zu/%zu)\n", flen, length);
-        hwlmExecStreaming(ftable, scratch, flen, start, roseFloatingCallback,
-                          scratch, tctxt->groups & t->floating_group_mask,
-                          stream_state);
+        hwlmExecStreaming(ftable, flen, start, roseFloatingCallback, scratch,
+                          tctxt->groups & t->floating_group_mask);
     }
 
 flush_delay_and_exit:
@@ -645,6 +675,14 @@ exit:
     if (!can_stop_matching(scratch)) {
         ensureStreamNeatAndTidy(t, state, scratch, length, offset);
     }
+
+    if (!told_to_stop_matching(scratch)
+        && can_never_match(t, state, scratch, length, offset)) {
+        DEBUG_PRINTF("PATTERN SET IS EXHAUSTED\n");
+        scratch->core_info.status = STATUS_EXHAUSTED;
+        return;
+    }
+
     DEBUG_PRINTF("DONE STREAMING SCAN, status = %u\n",
                  scratch->core_info.status);
     return;
@@ -663,6 +701,7 @@ void roseStreamInitEod(const struct RoseEngine *t, u64a offset,
     tctxt->lastEndOffset = offset;
     tctxt->filledDelayedSlots = 0;
     tctxt->lastMatchOffset = 0;
+    tctxt->lastCombMatchOffset = offset; /* DO NOT set 0 here! */
     tctxt->minMatchOffset = offset;
     tctxt->minNonMpvMatchOffset = offset;
     tctxt->next_mpv_offset = offset;
@@ -705,11 +744,9 @@ void roseStreamEodExec(const struct RoseEngine *t, u64a offset,
     assert(!scratch->tctxt.filledDelayedSlots);
 
     const u64a som = 0;
-    const size_t match_len = 0;
     const u8 flags = ROSE_PROG_FLAG_SKIP_MPV_CATCHUP;
 
     // Note: we ignore the result, as this is the last thing to ever happen on
     // a scan.
-    roseRunProgram(t, scratch, t->eodProgramOffset, som, offset, match_len,
-                   flags);
+    roseRunProgram(t, scratch, t->eodProgramOffset, som, offset, flags);
 }

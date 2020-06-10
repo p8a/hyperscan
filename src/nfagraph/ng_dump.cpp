@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -35,24 +35,26 @@
 
 #include "config.h"
 
-#include "ng_dump.h"
+#include "nfagraph/ng_dump.h"
 
-#include "hwlm/hwlm_build.h"
-#include "ng.h"
-#include "ng_util.h"
-#include "parser/position.h"
+#include "hs_compile.h" /* for HS_MODE_* flags */
 #include "ue2common.h"
+#include "compiler/compiler.h"
+#include "hwlm/hwlm_build.h"
 #include "nfa/accel.h"
 #include "nfa/nfa_internal.h" // for MO_INVALID_IDX
-#include "smallwrite/smallwrite_dump.h"
+#include "nfagraph/ng.h"
+#include "nfagraph/ng_util.h"
+#include "parser/position.h"
 #include "rose/rose_build.h"
 #include "rose/rose_internal.h"
+#include "smallwrite/smallwrite_dump.h"
 #include "util/bitutils.h"
 #include "util/dump_charclass.h"
+#include "util/dump_util.h"
 #include "util/report.h"
 #include "util/report_manager.h"
 #include "util/ue2string.h"
-#include "hs_compile.h" /* for HS_MODE_* flags */
 
 #include <cmath>
 #include <fstream>
@@ -174,7 +176,7 @@ public:
         : g(g_in), rm(&rm_in) {}
 
     NFAWriter(const GraphT &g_in,
-              const ue2::unordered_map<NFAVertex, u32> &region_map_in)
+              const unordered_map<NFAVertex, u32> &region_map_in)
         : g(g_in), region_map(&region_map_in) {}
 
     void operator()(ostream& os, const VertexT& v) const {
@@ -234,9 +236,9 @@ public:
     void operator()(ostream& os, const EdgeT& e) const {
         // Edge label. Print priority.
         os << "[fontsize=9,label=\"";
-        // If it's an edge from start, print top id.
-        if (is_any_start(source(e, g), g) && !is_any_start(target(e, g), g)) {
-            os << "TOP " << g[e].top << "\\n";
+        // print tops if any set.
+        if (!g[e].tops.empty()) {
+            os << "TOP " << as_string_list(g[e].tops) << "\\n";
         }
 
         // If it's an assert vertex, then display its info.
@@ -252,7 +254,7 @@ public:
 private:
     const GraphT &g;
     const ReportManager *rm = nullptr;
-    const ue2::unordered_map<NFAVertex, u32> *region_map = nullptr;
+    const unordered_map<NFAVertex, u32> *region_map = nullptr;
 };
 }
 
@@ -276,7 +278,7 @@ void dumpGraphImpl(const char *name, const GraphT &g, const ReportManager &rm) {
 
 template <typename GraphT>
 void dumpGraphImpl(const char *name, const GraphT &g,
-                   const ue2::unordered_map<NFAVertex, u32> &region_map) {
+                   const unordered_map<NFAVertex, u32> &region_map) {
     typedef typename boost::graph_traits<GraphT>::vertex_descriptor VertexT;
     typedef typename boost::graph_traits<GraphT>::edge_descriptor EdgeT;
     ofstream os(name);
@@ -285,15 +287,15 @@ void dumpGraphImpl(const char *name, const GraphT &g,
 }
 
 // manual instantiation of templated dumpGraph above.
-template void dumpGraphImpl(const char *, const NFAGraph &);
+template void dumpGraphImpl(const char *, const NGHolder &);
 
-void dumpDotWrapperImpl(const NGWrapper &nw, const char *name,
-                        const Grey &grey) {
+void dumpDotWrapperImpl(const NGHolder &g, const ExpressionInfo &expr,
+                        const char *name, const Grey &grey) {
     if (grey.dumpFlags & Grey::DUMP_INT_GRAPH) {
         stringstream ss;
-        ss << grey.dumpPath << "Expr_" << nw.expressionIndex << "_" << name << ".dot";
+        ss << grey.dumpPath << "Expr_" << expr.index << "_" << name << ".dot";
         DEBUG_PRINTF("dumping dot graph to '%s'\n", ss.str().c_str());
-        dumpGraphImpl(ss.str().c_str(), nw.g);
+        dumpGraphImpl(ss.str().c_str(), g);
     }
 }
 
@@ -304,7 +306,7 @@ void dumpComponentImpl(const NGHolder &g, const char *name, u32 expr,
         ss << grey.dumpPath << "Comp_" << expr << "-" << comp << "_"
            << name << ".dot";
         DEBUG_PRINTF("dumping dot graph to '%s'\n", ss.str().c_str());
-        dumpGraphImpl(ss.str().c_str(), g.g);
+        dumpGraphImpl(ss.str().c_str(), g);
     }
 }
 
@@ -315,7 +317,7 @@ void dumpSomSubComponentImpl(const NGHolder &g, const char *name, u32 expr,
         ss << grey.dumpPath << "Comp_" << expr << "-" << comp << "_"
            <<  name << "_" << plan << ".dot";
         DEBUG_PRINTF("dumping dot graph to '%s'\n", ss.str().c_str());
-        dumpGraphImpl(ss.str().c_str(), g.g);
+        dumpGraphImpl(ss.str().c_str(), g);
     }
 }
 
@@ -325,19 +327,19 @@ void dumpHolderImpl(const NGHolder &h, unsigned int stageNumber,
         stringstream ss;
         ss << grey.dumpPath << "Holder_X_" << stageNumber
            << "-" << stageName << ".dot";
-        dumpGraphImpl(ss.str().c_str(), h.g);
+        dumpGraphImpl(ss.str().c_str(), h);
     }
 }
 
 void dumpHolderImpl(const NGHolder &h,
-                    const ue2::unordered_map<NFAVertex, u32> &region_map,
+                    const unordered_map<NFAVertex, u32> &region_map,
                     unsigned int stageNumber, const char *stageName,
                     const Grey &grey) {
     if (grey.dumpFlags & Grey::DUMP_INT_GRAPH) {
         stringstream ss;
         ss << grey.dumpPath << "Holder_X_" << stageNumber
            << "-" << stageName << ".dot";
-        dumpGraphImpl(ss.str().c_str(), h.g, region_map);
+        dumpGraphImpl(ss.str().c_str(), h, region_map);
     }
 }
 
@@ -347,14 +349,7 @@ void dumpSmallWrite(const RoseEngine *rose, const Grey &grey) {
     }
 
     const struct SmallWriteEngine *smwr = getSmallWrite(rose);
-
-    stringstream ss;
-    ss << grey.dumpPath << "smallwrite.txt";
-
-    FILE *f = fopen(ss.str().c_str(), "w");
-    smwrDumpText(smwr, f);
-    fclose(f);
-
+    smwrDumpText(smwr, StdioFile(grey.dumpPath + "smallwrite.txt", "w"));
     smwrDumpNFA(smwr, false, grey.dumpPath);
 }
 
@@ -419,9 +414,7 @@ void dumpReportManager(const ReportManager &rm, const Grey &grey) {
         return;
     }
 
-    stringstream ss;
-    ss << grey.dumpPath << "internal_reports.txt";
-    FILE *f = fopen(ss.str().c_str(), "w");
+    StdioFile f(grey.dumpPath + "internal_reports.txt", "w");
     const vector<Report> &reports = rm.reports();
     for (size_t i = 0; i < reports.size(); i++) {
         const Report &report = reports[i];
@@ -460,7 +453,6 @@ void dumpReportManager(const ReportManager &rm, const Grey &grey) {
         }
         fprintf(f, "\n");
     }
-    fclose(f);
 }
 
 } // namespace ue2

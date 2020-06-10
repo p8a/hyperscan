@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -79,8 +79,8 @@ TEST(NFAGraph, split1) {
 
     NFAVertex pivot = c;
 
-    ue2::unordered_map<NFAVertex, NFAVertex> lhs_map;
-    ue2::unordered_map<NFAVertex, NFAVertex> rhs_map;
+    unordered_map<NFAVertex, NFAVertex> lhs_map;
+    unordered_map<NFAVertex, NFAVertex> rhs_map;
 
     splitGraph(src, pivot, &lhs, &lhs_map, &rhs, &rhs_map);
 
@@ -130,8 +130,8 @@ TEST(NFAGraph, split2) {
 
     NFAVertex pivot = c;
 
-    ue2::unordered_map<NFAVertex, NFAVertex> lhs_map;
-    ue2::unordered_map<NFAVertex, NFAVertex> rhs_map;
+    unordered_map<NFAVertex, NFAVertex> lhs_map;
+    unordered_map<NFAVertex, NFAVertex> rhs_map;
 
     splitGraph(src, pivot, &lhs, &lhs_map, &rhs, &rhs_map);
 
@@ -203,8 +203,8 @@ TEST(NFAGraph, split3) {
     pivots.push_back(d);
     pivots.push_back(g);
 
-    ue2::unordered_map<NFAVertex, NFAVertex> lhs_map;
-    ue2::unordered_map<NFAVertex, NFAVertex> rhs_map;
+    unordered_map<NFAVertex, NFAVertex> lhs_map;
+    unordered_map<NFAVertex, NFAVertex> rhs_map;
 
     splitGraph(src, pivots, &lhs, &lhs_map, &rhs, &rhs_map);
 
@@ -280,8 +280,8 @@ TEST(NFAGraph, split4) {
     pivots.push_back(d);
     pivots.push_back(g);
 
-    ue2::unordered_map<NFAVertex, NFAVertex> lhs_map;
-    ue2::unordered_map<NFAVertex, NFAVertex> rhs_map;
+    unordered_map<NFAVertex, NFAVertex> lhs_map;
+    unordered_map<NFAVertex, NFAVertex> rhs_map;
 
     splitGraph(src, pivots, &lhs, &lhs_map, &rhs, &rhs_map);
 
@@ -320,9 +320,9 @@ TEST(NFAGraph, cyclicVerts1) {
     add_edge(a, b, g);
     add_edge(b, a, g);
 
-    auto cyclics = findVerticesInCycles(g);
+    auto cyclics = find_vertices_in_cycles(g);
 
-    ASSERT_EQ(set<NFAVertex>({g.startDs, a, b}), cyclics);
+    ASSERT_EQ(flat_set<NFAVertex>({g.startDs, a, b}), cyclics);
 }
 
 TEST(NFAGraph, cyclicVerts2) {
@@ -341,9 +341,9 @@ TEST(NFAGraph, cyclicVerts2) {
     add_edge(c, d, g);
     add_edge(a, e, g);
 
-    auto cyclics = findVerticesInCycles(g);
+    auto cyclics = find_vertices_in_cycles(g);
 
-    ASSERT_EQ(set<NFAVertex>({g.startDs, a, b, c}), cyclics);
+    ASSERT_EQ(flat_set<NFAVertex>({g.startDs, a, b, c}), cyclics);
 }
 
 TEST(NFAGraph, cyclicVerts3) {
@@ -369,9 +369,9 @@ TEST(NFAGraph, cyclicVerts3) {
     add_edge(f, h, g);
     add_edge(h, h, g);
 
-    auto cyclics = findVerticesInCycles(g);
+    auto cyclics = find_vertices_in_cycles(g);
 
-    ASSERT_EQ(set<NFAVertex>({g.startDs, a, b, c, d, e, h}), cyclics);
+    ASSERT_EQ(flat_set<NFAVertex>({g.startDs, a, b, c, d, e, h}), cyclics);
 }
 
 TEST(NFAGraph, cyclicVerts4) {
@@ -396,9 +396,9 @@ TEST(NFAGraph, cyclicVerts4) {
     add_edge(e, f, g);
     add_edge(f, h, g);
 
-    auto cyclics = findVerticesInCycles(g);
+    auto cyclics = find_vertices_in_cycles(g);
 
-    ASSERT_EQ(set<NFAVertex>({g.startDs, a, b, c, d, e}), cyclics);
+    ASSERT_EQ(flat_set<NFAVertex>({g.startDs, a, b, c, d, e}), cyclics);
 }
 
 TEST(NFAGraph, cyclicVerts5) {
@@ -418,7 +418,7 @@ TEST(NFAGraph, cyclicVerts5) {
     add_edge(c, d, g);
     add_edge(e, c, g);
 
-    auto cyclics = findVerticesInCycles(g);
+    auto cyclics = find_vertices_in_cycles(g);
 
-    ASSERT_EQ(set<NFAVertex>({g.startDs, b, c}), cyclics);
+    ASSERT_EQ(flat_set<NFAVertex>({g.startDs, b, c}), cyclics);
 }

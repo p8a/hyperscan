@@ -17,5 +17,7 @@ Hyperscan |version| Developer's Reference Guide
    runtime
    serialization
    performance
+   tools
    api_constants
    api_files
+   chimera

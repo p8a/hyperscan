@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -39,6 +39,7 @@
 #include "ue2common.h"
 #include "util/charreach.h"
 #include "util/dump_charclass.h"
+#include "util/dump_util.h"
 #include "util/unaligned.h"
 
 #include <cctype>
@@ -267,14 +268,15 @@ void dumpDotPreambleDfa(FILE *f) {
     fprintf(f, "0 [style=invis];\n");
 }
 
-void nfaExecMcClellan16_dumpDot(const NFA *nfa, FILE *f,
-                                UNUSED const string &base) {
+static
+void nfaExecMcClellan16_dumpDot(const NFA *nfa, FILE *f) {
     assert(nfa->type == MCCLELLAN_NFA_16);
     const mcclellan *m = (const mcclellan *)getImplNfa(nfa);
 
     dumpDotPreambleDfa(f);
 
-    for (u16 i = 1; i < m->state_count; i++) {
+    u16 sherman_ceil = m->has_wide == 1 ? m->wide_limit : m->state_count;
+    for (u16 i = 1; i < sherman_ceil; i++) {
         describeNode(nfa, m, i, f);
 
         u16 t[ALPHABET_SIZE];
@@ -287,8 +289,8 @@ void nfaExecMcClellan16_dumpDot(const NFA *nfa, FILE *f,
     fprintf(f, "}\n");
 }
 
-void nfaExecMcClellan8_dumpDot(const NFA *nfa, FILE *f,
-                               UNUSED const string &base) {
+static
+void nfaExecMcClellan8_dumpDot(const NFA *nfa, FILE *f) {
     assert(nfa->type == MCCLELLAN_NFA_8);
     const mcclellan *m = (const mcclellan *)getImplNfa(nfa);
 
@@ -313,7 +315,8 @@ void dumpAccelMasks(FILE *f, const mcclellan *m, const mstate_aux *aux) {
     fprintf(f, "Acceleration\n");
     fprintf(f, "------------\n");
 
-    for (u16 i = 0; i < m->state_count; i++) {
+    u16 sherman_ceil = m->has_wide == 1 ? m->wide_limit : m->state_count;
+    for (u16 i = 0; i < sherman_ceil; i++) {
         if (!aux[i].accel_offset) {
             continue;
         }
@@ -359,7 +362,8 @@ void dumpCommonHeader(FILE *f, const mcclellan *m) {
 static
 void dumpTransitions(FILE *f, const NFA *nfa, const mcclellan *m,
                      const mstate_aux *aux) {
-    for (u16 i = 0; i < m->state_count; i++) {
+    u16 sherman_ceil = m->has_wide == 1 ? m->wide_limit : m->state_count;
+    for (u16 i = 0; i < sherman_ceil; i++) {
         fprintf(f, "%05hu", i);
         if (aux[i].accel_offset) {
             dumpAccelText(f, (const union AccelAux *)((const char *)m +
@@ -397,6 +401,7 @@ void dumpTransitions(FILE *f, const NFA *nfa, const mcclellan *m,
     }
 }
 
+static
 void nfaExecMcClellan16_dumpText(const NFA *nfa, FILE *f) {
     assert(nfa->type == MCCLELLAN_NFA_16);
     const mcclellan *m = (const mcclellan *)getImplNfa(nfa);
@@ -417,6 +422,7 @@ void nfaExecMcClellan16_dumpText(const NFA *nfa, FILE *f) {
     dumpTextReverse(nfa, f);
 }
 
+static
 void nfaExecMcClellan8_dumpText(const NFA *nfa, FILE *f) {
     assert(nfa->type == MCCLELLAN_NFA_8);
     const mcclellan *m = (const mcclellan *)getImplNfa(nfa);
@@ -435,6 +441,18 @@ void nfaExecMcClellan8_dumpText(const NFA *nfa, FILE *f) {
 
     fprintf(f, "\n");
     dumpTextReverse(nfa, f);
+}
+
+void nfaExecMcClellan16_dump(const NFA *nfa, const string &base) {
+    assert(nfa->type == MCCLELLAN_NFA_16);
+    nfaExecMcClellan16_dumpText(nfa, StdioFile(base + ".txt", "w"));
+    nfaExecMcClellan16_dumpDot(nfa, StdioFile(base + ".dot", "w"));
+}
+
+void nfaExecMcClellan8_dump(const NFA *nfa, const string &base) {
+    assert(nfa->type == MCCLELLAN_NFA_8);
+    nfaExecMcClellan8_dumpText(nfa, StdioFile(base + ".txt", "w"));
+    nfaExecMcClellan8_dumpDot(nfa, StdioFile(base + ".dot", "w"));
 }
 
 } // namespace ue2

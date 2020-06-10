@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016, Intel Corporation
+ * Copyright (c) 2015-2017, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -39,10 +39,12 @@ namespace ue2 {
 u32 remove_leading_dots(raw_dfa &raw);
 
 /**
- * Prunes any states which cannot be reached within max_offset from start of
- * stream. Returns false if no changes are made to the rdfa
+ * \brief Clear reports on any states that are deeper than \a max_offset from
+ * start of stream.
+ *
+ * Returns false if no changes are made to the DFA.
  */
-bool prune_overlong(raw_dfa &raw, u32 max_offset);
+bool clear_deeper_reports(raw_dfa &raw, u32 max_offset);
 
 std::set<ReportID> all_reports(const raw_dfa &rdfa);
 bool has_eod_accepts(const raw_dfa &rdfa);
@@ -56,6 +58,13 @@ size_t hash_dfa_no_reports(const raw_dfa &rdfa);
 size_t hash_dfa(const raw_dfa &rdfa);
 
 bool can_die_early(const raw_dfa &raw, u32 age_limit);
+
+/**
+ * \brief Returns true if this DFA cannot match, i.e. its start state is
+ * DEAD_STATE.
+ */
+bool is_dead(const raw_dfa &rdfa);
+
 
 } // namespace ue2
 
